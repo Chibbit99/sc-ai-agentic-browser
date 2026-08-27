@@ -15,7 +15,7 @@ chmod +x "$ROOT/build.sh" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/make-de
 
 # Installation is intentionally atomic from the user's perspective: never
 # install a launcher without the runtime it must start.
-if [ ! -f build/dist/sc-ai-launcher ] || [ ! -f build/dist/sc-ai-runtime ] || [ ! -f build/dist/sc-ai-icon.png ]; then
+if [ ! -x build/dist/sc-ai-launcher ] || [ ! -x build/dist/sc-ai-runtime ] || [ ! -s build/dist/sc-ai-icon.png ]; then
     echo "SC.AI build artifacts are incomplete." >&2
     echo "Run: bash build.sh && bash install.sh" >&2
     exit 1

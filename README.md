@@ -44,7 +44,7 @@ sc-ai/
 ├── installer/
 │   └── sc-ai.desktop      # KDE menu entry (template)
 ├── build/
-│   └── make_icon.py       # Dependency-free icon generator
+│   └── (custom icon supplied at launcher/icon.png)
 ├── build.sh               # PyInstaller build → build/dist/
 ├── install.sh             # User-local install + menu registration
 ├── make-desktop-entry.sh  # Refresh menu/icon without rebuilding
@@ -157,7 +157,9 @@ system `python3-tk` package. The **installed** app needs neither Python nor
 Tk — PyInstaller bundles them.
 
 ```bash
-# 1) Build both binaries + icon into build/dist/
+# 1) Put your own PNG at launcher/icon.png first.
+# Recommended: a square PNG, ideally 512x512 or larger.
+# 2) Build both binaries + icon into build/dist/
 # bash is intentional: cloned files may not have executable permission bits.
 bash build.sh      # completes both PyInstaller binaries before returning
 
@@ -181,6 +183,10 @@ Uninstall (keeps your data): `bash uninstall.sh` or `make uninstall`.
 If you rebuilt or moved the installed files and only need to refresh KDE's
 menu entry, run `bash make-desktop-entry.sh` (or `bash install-desktop.sh`,
 or `make refresh-menu`).
+
+The build does not generate an icon. Replace `launcher/icon.png` with your
+own PNG before building; that exact file is embedded in the launcher and
+copied into the KDE icon theme directory.
 
 The scripts are intentionally documented with `bash script.sh` rather than
 `./script.sh`, because Git checkouts, ZIP archives, and some file systems can
@@ -230,7 +236,7 @@ server.
 | "SC.AI is already running" | Another SC.AI session is using the profile. Close the browser window first. |
 | Snap browser fails to start | Prefer a native or Flatpak install of that browser. |
 | Dev run: `ModuleNotFoundError: _tkinter` | Install `python3-tk` (Ubuntu/Kubuntu). Installed users don't need it. |
-| `./build.sh: Permission denied` | Run `bash build.sh`; it now repairs permissions automatically. Future checkouts can also restore them with `chmod +x build.sh install.sh uninstall.sh make-desktop-entry.sh`. |
+| `Missing custom icon` | Copy your PNG to `launcher/icon.png`, then run `bash build.sh` again. |
 | `./uninstall.sh: Permission denied` | Run `bash uninstall.sh`; the uninstaller now repairs its own permission for later use. |
 | Menu entry does not appear immediately | Run `kbuildsycoca6 --noincremental` (KDE 6) or `kbuildsycoca5 --noincremental` (KDE 5), then search for SC.AI again. |
 
