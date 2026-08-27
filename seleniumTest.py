@@ -151,6 +151,9 @@ class AppHandler(BaseHTTPRequestHandler):
                     chunk = response.read(4096)
                     if not chunk:
                         break
+                    # Normalize upstream line endings while preserving SSE
+                    # event boundaries for the browser's streaming parser.
+                    chunk = chunk.replace(b"\\r\\n", b"\\n")
                     self.wfile.write(chunk)
                     self.wfile.flush()
         except HTTPError as error:
