@@ -33,10 +33,15 @@ def create_profile_path():
         probe = profile_path / ".write-test"
         probe.write_text("ok", encoding="utf-8")
         probe.unlink()
-        return profile_path
+        return profile_path.resolve()
     except OSError as error:
         print(f"Persistent browser storage unavailable: {error}")
         return None
+
+
+def create_temporary_profile():
+    """Create a Chrome profile in a writable directory with a real path."""
+    return Path(tempfile.mkdtemp(prefix="scai-chrome-", dir=tempfile.gettempdir())).resolve()
 
 
 def find_browser():
@@ -52,6 +57,7 @@ def build_options(browser_path, profile_path=None):
     chrome_options.add_argument("--allow-file-access-from-files")
     if profile_path:
         chrome_options.add_argument(f"--user-data-dir={profile_path}")
+        chrome_options.add_argument("--profile-directory=Default")
     if browser_path:
         chrome_options.binary_location = browser_path
     return chrome_options
@@ -75,7 +81,7 @@ try:
         if persistent_profile is None:
             raise
         print(f"Saved Chrome profile could not be opened; retrying with a temporary profile: {first_error}")
-        temporary_profile = Path(tempfile.mkdtemp(prefix="scai-chrome-"))
+        temporary_profile = create_temporary_profile()
         driver = webdriver.Chrome(options=build_options(browser_path, temporary_profile))
 
     driver.get(html_file_path.as_uri())
