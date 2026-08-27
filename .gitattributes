@@ -1,0 +1,8 @@
+# Preserve executable mode for the application scripts in Git checkouts.
+build.sh text eol=lf
+install.sh text eol=lf
+uninstall.sh text eol=lf
+make-desktop-entry.sh text eol=lf
+build/make_icon.py text eol=lf
+launcher/launcher.py text eol=lf
+app/*.py text eol=lf

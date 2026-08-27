@@ -14,7 +14,7 @@ venv:
 	.venv/bin/pip install -r requirements.txt
 
 build:
-	./build.sh
+	bash build.sh
 
 install:
 	bash install.sh
