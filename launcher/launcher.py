@@ -41,9 +41,16 @@ def launcher_icon_path() -> Path:
 
 
 def runtime_command(selected: browsers.DetectedBrowser) -> list[str]:
-    """The command that starts the SC.AI runtime with the chosen browser."""
+    """Return the runtime executable, requiring a completed installation."""
     if common.is_frozen():
-        exe = Path(sys.executable).resolve().parent / "sc-ai-runtime"
+        # The launcher and runtime are installed side by side in ~/.local/bin.
+        # Resolve from the real executable path, not _MEIPASS, so this remains
+        # correct for PyInstaller one-file binaries.
+        exe = Path(sys.executable).resolve().with_name("sc-ai-runtime")
+        if not exe.is_file():
+            raise FileNotFoundError(
+                f"SC.AI runtime is missing: {exe}. Run 'bash build.sh && bash install.sh'."
+            )
         return [str(exe), "--browser", selected.id, "--browser-path", selected.path]
     script = Path(__file__).resolve().parent.parent / "app" / "seleniumTest.py"
     return [sys.executable, str(script), "--browser", selected.id, "--browser-path", selected.path]
@@ -51,8 +58,14 @@ def runtime_command(selected: browsers.DetectedBrowser) -> list[str]:
 
 def spawn_runtime(selected: browsers.DetectedBrowser) -> tuple[subprocess.Popen | None, str]:
     try:
-        return subprocess.Popen(runtime_command(selected)), ""
-    except OSError as error:
+        return subprocess.Popen(
+            runtime_command(selected),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        ), ""
+    except (OSError, FileNotFoundError) as error:
         return None, f"Could not start the SC.AI runtime: {error}"
 
 

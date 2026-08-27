@@ -57,7 +57,10 @@ sc-ai/
 ### Launcher vs runtime
 
 The launcher is the window users pin to the taskbar. It only picks the
-browser; then it starts the runtime and exits. The runtime owns the local
+browser; then it starts the already-built runtime and exits. The build and
+install steps are separate on purpose: never launch SC.AI from a checkout
+while PyInstaller is still producing artifacts. Always wait for `bash build.sh`
+to print `Build complete`, then run `bash install.sh`. The runtime owns the local
 HTTP server, Selenium, and the browser process, and lives exactly as long as
 the browser window is open. This keeps the two concerns separate and means
 closing the launcher never kills a running SC.AI session.
@@ -156,10 +159,10 @@ Tk — PyInstaller bundles them.
 ```bash
 # 1) Build both binaries + icon into build/dist/
 # bash is intentional: cloned files may not have executable permission bits.
-bash build.sh      # or: make build
+bash build.sh      # completes both PyInstaller binaries before returning
 
 # 2) Install for the current user (no root)
-bash install.sh    # or: make install
+bash install.sh    # refuses incomplete/partial build artifacts
 ```
 
 This installs `sc-ai-launcher` / `sc-ai-runtime` into `~/.local/bin`,
@@ -205,7 +208,7 @@ python3 -m venv .venv
 .venv/bin/python app/seleniumTest.py \
     --browser chrome --browser-path "$(command -v google-chrome-stable)"
 
-# 4) Full build + install
+# 4) Full build + install (build must finish before install starts)
 bash build.sh && bash install.sh
 ```
 

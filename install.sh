@@ -13,9 +13,11 @@ ICON_DIR="$PREFIX/share/icons/hicolor/512x512/apps"
 # Repair executable mode bits in a checkout that was cloned with 0644 files.
 chmod +x "$ROOT/build.sh" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/make-desktop-entry.sh" 2>/dev/null || true
 
-if [ ! -x build/dist/sc-ai-launcher ] || [ ! -x build/dist/sc-ai-runtime ]; then
-    echo "SC.AI has not been built yet." >&2
-    echo "Run: bash build.sh" >&2
+# Installation is intentionally atomic from the user's perspective: never
+# install a launcher without the runtime it must start.
+if [ ! -f build/dist/sc-ai-launcher ] || [ ! -f build/dist/sc-ai-runtime ] || [ ! -f build/dist/sc-ai-icon.png ]; then
+    echo "SC.AI build artifacts are incomplete." >&2
+    echo "Run: bash build.sh && bash install.sh" >&2
     exit 1
 fi
 
