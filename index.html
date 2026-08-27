@@ -296,27 +296,50 @@
                 return [];
             }
         }
-        function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
+        let savedApiKey = '';
+        function getApiKey() { return savedApiKey; }
+        async function loadApiKey() {
+            try {
+                const response = await fetch('/api/config', { cache: 'no-store' });
+                if (response.ok) {
+                    const data = await response.json();
+                    savedApiKey = data.hasApiKey ? 'stored' : '';
+                }
+            } catch (error) {
+                savedApiKey = localStorage.getItem(API_KEY_STORAGE) || '';
+            }
+            updateApiKeyStatus();
+        }
         function updateApiKeyStatus() {
             document.getElementById('apiKeyStatus').textContent = getApiKey() ? '● connected' : '';
         }
-        function openSettings() {
-            document.getElementById('apiKeyInput').value = getApiKey();
+        async function openSettings() {
+            try {
+                const response = await fetch('/api/config/key', { cache: 'no-store' });
+                const data = await response.json();
+                document.getElementById('apiKeyInput').value = data.apiKey || '';
+            } catch (error) {
+                document.getElementById('apiKeyInput').value = localStorage.getItem(API_KEY_STORAGE) || '';
+            }
             document.getElementById('settingsModal').classList.add('open');
             document.getElementById('apiKeyInput').focus();
         }
         function closeSettings() { document.getElementById('settingsModal').classList.remove('open'); }
-        function saveApiKey() {
+        async function saveApiKey() {
             const key = document.getElementById('apiKeyInput').value.trim();
-            if (!key) { clearApiKey(); return; }
-            localStorage.setItem(API_KEY_STORAGE, key);
+            try {
+                await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: key }) });
+                savedApiKey = key;
+            } catch (error) {
+                localStorage.setItem(API_KEY_STORAGE, key);
+                savedApiKey = key;
+            }
             updateApiKeyStatus();
             closeSettings();
         }
         function clearApiKey() {
-            localStorage.removeItem(API_KEY_STORAGE);
-            updateApiKeyStatus();
             document.getElementById('apiKeyInput').value = '';
+            saveApiKey();
         }
 
         function openModelModal() {
@@ -465,6 +488,7 @@
                 addMessage(message.role === 'user' ? 'user' : 'ai', message.content);
             });
         }
+        loadApiKey();
         updateApiKeyStatus();
         renderSavedMessages();
 
