@@ -13,6 +13,9 @@ VENV="$ROOT/.venv"
 PYTHON="${PYTHON:-python3}"
 RUNTIME_TMP="${XDG_CACHE_HOME:-$HOME/.cache}/sc-ai/pyi"
 
+# This checkout may be unpacked or cloned without executable mode bits.
+# Build scripts are run explicitly with bash so this works either way.
+
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
     echo "python3 is required to build SC.AI." >&2
     exit 1
