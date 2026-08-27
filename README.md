@@ -204,18 +204,21 @@ git clone <repo> sc-ai && cd sc-ai
 python3 -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
-# 1) See what the launcher detects
+# 1) See what browsers are detected (safe; does not launch anything)
 .venv/bin/python launcher/launcher.py --list
 
-# 2) Run the launcher GUI (or --console for a text picker)
-.venv/bin/python launcher/launcher.py
-
-# 3) Run the runtime directly (skips the launcher)
-.venv/bin/python app/seleniumTest.py \
-    --browser chrome --browser-path "$(command -v google-chrome-stable)"
-
-# 4) Full build + install (build must finish before install starts)
+# 2) Build and install the packaged app FIRST.
+# Do not run the source launcher before this step: it starts the development
+# runtime and is not the installed desktop application.
 bash build.sh && bash install.sh
+
+# 3) Launch the installed desktop application.
+# This is the command represented by the KDE menu entry.
+"$HOME/.local/bin/sc-ai-launcher"
+
+# Optional: run the source runtime directly for development/debugging.
+# .venv/bin/python app/seleniumTest.py \
+#     --browser chrome --browser-path "$(command -v google-chrome-stable)"
 ```
 
 When running the runtime directly, the browser's Selenium window opens with

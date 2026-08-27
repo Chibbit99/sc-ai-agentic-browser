@@ -43,6 +43,8 @@ fi
 # also validates all three artifacts before replacing the user's binaries.
 mkdir -p build/dist build/work
 rm -rf build/dist/*
+# The launcher is never available from the build output until both PyInstaller
+# invocations below complete successfully.
 
 # Selenium runtime: bundles selenium + index.html.
 # --runtime-tmpdir avoids /tmp noexec issues on some distros (onefile
