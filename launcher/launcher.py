@@ -254,6 +254,8 @@ def run_gui(detected: list[browsers.DetectedBrowser]) -> int:
         status_label.update()
         root.update()
 
+        # The runtime is guaranteed to have been built and installed before
+        # this menu entry exists. Do not package or build from the launcher.
         proc, error = spawn_runtime(chosen)
         if proc is None:
             status_label.config(text=error, fg="#b3261e")

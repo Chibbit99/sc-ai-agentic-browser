@@ -57,6 +57,7 @@ rm -rf build/dist/*
 # Launcher: tkinter GUI. No selenium needed, so this stays small.
 "$VENV/bin/pyinstaller" --noconfirm --clean \
     --onefile --windowed \
+    --icon "$ROOT/launcher/icon.png" \
     --name sc-ai-launcher \
     --paths "$ROOT" \
     --distpath build/dist --workpath build/work --specpath build \

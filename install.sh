@@ -23,6 +23,7 @@ fi
 
 mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_DIR"
 
+# Replace the installed pair only after the complete build has been checked.
 install -m 755 build/dist/sc-ai-launcher "$BIN_DIR/sc-ai-launcher"
 install -m 755 build/dist/sc-ai-runtime "$BIN_DIR/sc-ai-runtime"
 install -m 644 build/dist/sc-ai-icon.png "$ICON_DIR/sc-ai.png"
