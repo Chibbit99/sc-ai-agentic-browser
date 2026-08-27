@@ -280,10 +280,11 @@
 
         // ---- Model selector ----
         const MODELS = [
-            { id: 'glm-5.2', name: 'GLM 5.2', desc: 'Default general-purpose model' },
-            { id: 'qwen-3.6', name: 'Qwen 3.6', desc: 'Fast, lightweight responses' },
-            { id: 'lfm-2.5', name: 'LFM 2.5', desc: 'Compact and efficient' },
-            { id: 'polly', name: 'Polly', desc: 'Creative writing focus' }
+            { id: 'meta/llama-3.1-8b-instruct', name: 'Llama 3.1 8B Instruct', desc: 'Fast general-purpose chat' },
+            { id: 'meta/llama-3.1-70b-instruct', name: 'Llama 3.1 70B Instruct', desc: 'Higher-quality general chat' },
+            { id: 'mistralai/mistral-7b-instruct-v0.3', name: 'Mistral 7B Instruct', desc: 'Fast instruction following' },
+            { id: 'qwen/qwen2.5-72b-instruct', name: 'Qwen 2.5 72B Instruct', desc: 'Strong reasoning and multilingual chat' },
+            { id: 'nvidia/llama-3.1-nemotron-ultra-253b-v1', name: 'Nemotron Ultra 253B', desc: 'Advanced NVIDIA reasoning model' }
         ];
         let selectedModel = MODELS[0].id;
         let messages = loadMessages();
@@ -303,7 +304,13 @@
                 const response = await fetch('/api/config', { cache: 'no-store' });
                 if (response.ok) {
                     const data = await response.json();
-                    savedApiKey = data.hasApiKey ? 'stored' : '';
+                    if (data.hasApiKey) {
+                        const keyResponse = await fetch('/api/config/key', { cache: 'no-store' });
+                        const keyData = await keyResponse.json();
+                        savedApiKey = keyData.apiKey || '';
+                    } else {
+                        savedApiKey = '';
+                    }
                 }
             } catch (error) {
                 savedApiKey = localStorage.getItem(API_KEY_STORAGE) || '';
@@ -328,7 +335,8 @@
         async function saveApiKey() {
             const key = document.getElementById('apiKeyInput').value.trim();
             try {
-                await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: key }) });
+                const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: key }) });
+                if (!response.ok) throw new Error('Key could not be saved');
                 savedApiKey = key;
             } catch (error) {
                 localStorage.setItem(API_KEY_STORAGE, key);
@@ -463,19 +471,44 @@
             try {
                 const response = await fetch(NIM_API_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
-                    body: JSON.stringify({ model: selectedModel, messages: messages, temperature: 0.7, max_tokens: 1024, stream: false })
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey, 'Accept': 'text/event-stream' },
+                    body: JSON.stringify({ model: selectedModel, messages: messages, temperature: 0.7, max_tokens: 1024, stream: true })
                 });
-                const data = await response.json();
-                if (!response.ok) throw new Error(data.error && data.error.message ? data.error.message : 'NVIDIA NIM request failed (' + response.status + ')');
-                const reply = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
-                if (!reply) throw new Error('NVIDIA NIM returned no message. Check the selected model and API key.');
+                if (!response.ok) {
+                    let detail = 'NVIDIA NIM request failed (' + response.status + ')';
+                    try { const errorData = await response.json(); detail = errorData.error && errorData.error.message ? errorData.error.message : detail; } catch (_) {}
+                    throw new Error(detail);
+                }
+                if (!response.body) throw new Error('Streaming is unavailable in this browser.');
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+                let reply = '';
+                const message = addMessage('ai', '');
+                const bubble = message.querySelector('.chat-msg-bubble');
+                while (true) {
+                    const chunk = await reader.read();
+                    if (chunk.done) break;
+                    buffer += decoder.decode(chunk.value, { stream: true });
+                    const lines = buffer.split('\\n');
+                    buffer = lines.pop() || '';
+                    lines.forEach(function (line) {
+                        if (!line.startsWith('data:')) return;
+                        const payload = line.slice(5).trim();
+                        if (!payload || payload === '[DONE]') return;
+                        try {
+                            const data = JSON.parse(payload);
+                            const delta = data.choices && data.choices[0] && data.choices[0].delta && data.choices[0].delta.content;
+                            if (delta) { reply += delta; bubble.textContent = reply; document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight; }
+                        } catch (_) {}
+                    });
+                }
+                if (!reply) { message.remove(); throw new Error('NVIDIA NIM returned no streamed content.'); }
                 messages.push({ role: 'assistant', content: reply });
                 localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(messages.slice(-20)));
-                addMessage('ai', reply);
             } catch (error) {
                 messages.pop();
-                addMessage('ai', 'Unable to reach NVIDIA NIM: ' + (error.message || 'Unknown error'));
+                addMessage('ai', 'NVIDIA NIM error: ' + (error.message || 'Request failed. If this says Failed to fetch, check browser network access/CORS or run the rebuilt launcher.'));
             } finally {
                 removeTyping();
                 sendButton.disabled = false;

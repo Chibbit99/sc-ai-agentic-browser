@@ -60,6 +60,9 @@ class AppHandler(BaseHTTPRequestHandler):
         if route == "/api/config":
             self.send_json({"hasApiKey": bool(read_config().get("apiKey"))})
             return
+        if route == "/api/config/key":
+            self.send_json({"apiKey": read_config().get("apiKey", "")})
+            return
         if route == "/":
             try:
                 content = (BASE_PATH / "index.html").read_bytes()
