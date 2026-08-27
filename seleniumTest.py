@@ -4,21 +4,24 @@ venv/bin/pyinstaller --onefile --runtime-tmpdir ~/Downloads --collect-submodules
 test command: ./venv/bin/python3 seleniumTest.py
 """
 
+import json
 import os
 import shutil
 import sys
-import tempfile
+import threading
 import time
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import urlparse
 
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 
-BUILD_VERSION = "scai-launcher-2026-08-27-v3"
+BUILD_VERSION = "scai-launcher-2026-08-27-v4"
 
 
-def get_app_data_path():
+def app_data_path():
     if sys.platform == "darwin":
         return Path.home() / "Library" / "Application Support" / "SC.AI"
     if sys.platform.startswith("linux"):
@@ -26,22 +29,79 @@ def get_app_data_path():
     return Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "SC.AI"
 
 
-def create_profile_path():
+CONFIG_DIR = app_data_path()
+CONFIG_FILE = CONFIG_DIR / "config.json"
+
+
+def read_config():
     try:
-        profile_path = get_app_data_path() / "browser-profile"
-        profile_path.mkdir(parents=True, exist_ok=True)
-        probe = profile_path / ".write-test"
-        probe.write_text("ok", encoding="utf-8")
-        probe.unlink()
-        return profile_path.resolve()
-    except OSError as error:
-        print(f"Persistent browser storage unavailable: {error}")
-        return None
+        with CONFIG_FILE.open("r", encoding="utf-8") as file:
+            value = json.load(file)
+            return value if isinstance(value, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
 
 
-def create_temporary_profile():
-    """Create a Chrome profile in a writable directory with a real path."""
-    return Path(tempfile.mkdtemp(prefix="scai-chrome-", dir=tempfile.gettempdir())).resolve()
+def write_config(value):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    temporary_file = CONFIG_FILE.with_suffix(".tmp")
+    with temporary_file.open("w", encoding="utf-8") as file:
+        json.dump(value, file)
+    temporary_file.replace(CONFIG_FILE)
+    try:
+        CONFIG_FILE.chmod(0o600)
+    except OSError:
+        pass
+
+
+class AppHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        route = urlparse(self.path).path
+        if route == "/api/config":
+            self.send_json({"hasApiKey": bool(read_config().get("apiKey"))})
+            return
+        if route == "/":
+            try:
+                content = (BASE_PATH / "index.html").read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Content-Length", str(len(content)))
+                self.end_headers()
+                self.wfile.write(content)
+            except OSError:
+                self.send_error(404, "index.html not found")
+            return
+        self.send_error(404)
+
+    def do_POST(self):
+        if urlparse(self.path).path != "/api/config":
+            self.send_error(404)
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            payload = json.loads(self.rfile.read(length) or b"{}")
+            api_key = str(payload.get("apiKey", "")).strip()
+            config = read_config()
+            if api_key:
+                config["apiKey"] = api_key
+            else:
+                config.pop("apiKey", None)
+            write_config(config)
+            self.send_json({"saved": True, "hasApiKey": bool(api_key)})
+        except (ValueError, OSError, json.JSONDecodeError) as error:
+            self.send_json({"saved": False, "error": str(error)}, 400)
+
+    def send_json(self, value, status=200):
+        content = json.dumps(value).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def log_message(self, *_args):
+        pass
 
 
 def find_browser():
@@ -49,42 +109,31 @@ def find_browser():
     return next((path for name in browsers if (path := shutil.which(name))), None)
 
 
-def build_options(browser_path, profile_path=None):
-    chrome_options = Options()
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--allow-file-access-from-files")
-    if profile_path:
-        chrome_options.add_argument(f"--user-data-dir={profile_path}")
-        chrome_options.add_argument("--profile-directory=Default")
+def build_options(browser_path):
+    options = Options()
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     if browser_path:
-        chrome_options.binary_location = browser_path
-    return chrome_options
+        options.binary_location = browser_path
+    return options
 
 
-browser_path = find_browser()
 if getattr(sys, "frozen", False):
-    base_path = Path(sys._MEIPASS)
+    BASE_PATH = Path(sys._MEIPASS)
 else:
-    base_path = Path(__file__).parent.absolute()
+    BASE_PATH = Path(__file__).parent.absolute()
 
-html_file_path = base_path / "index.html"
+server = ThreadingHTTPServer(("127.0.0.1", 0), AppHandler)
+port = server.server_address[1]
+threading.Thread(target=server.serve_forever, daemon=True).start()
+
 driver = None
-
 try:
     print(f"SC.AI launcher {BUILD_VERSION}")
-    persistent_profile = create_profile_path()
-    try:
-        driver = webdriver.Chrome(options=build_options(browser_path, persistent_profile))
-    except WebDriverException as first_error:
-        if persistent_profile is None:
-            raise
-        print(f"Saved Chrome profile could not be opened; retrying with a temporary profile: {first_error}")
-        temporary_profile = create_temporary_profile()
-        driver = webdriver.Chrome(options=build_options(browser_path, temporary_profile))
-
-    driver.get(html_file_path.as_uri())
+    print(f"Local config: {CONFIG_FILE}")
+    driver = webdriver.Chrome(options=build_options(find_browser()))
+    driver.get(f"http://127.0.0.1:{port}/")
     while True:
         try:
             _ = driver.current_url
@@ -93,13 +142,14 @@ try:
             print("\nBrowser window was closed by the user.")
             break
     driver.quit()
+    server.shutdown()
     sys.exit(0)
-
 except KeyboardInterrupt:
-    print("\nScript interrupted by user (Ctrl+C). Exiting...")
     if driver:
         driver.quit()
+    server.shutdown()
     sys.exit(0)
 except Exception as error:
     print(f"An error occurred: {error}")
+    server.shutdown()
     sys.exit(1)
