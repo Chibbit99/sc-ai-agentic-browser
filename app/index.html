@@ -215,7 +215,7 @@
     <div class="chat-header">
         <div>
             <div class="chat-header-title"><span>SC</span>.AI</div>
-            <div class="chat-header-meta">SC AI Agentic Browser</div>
+            <div class="chat-header-meta" id="chatHeaderMeta">SC.AI Agentic Browser</div>
         </div>
         <div class="header-actions">
             <span class="api-key-status" id="apiKeyStatus" aria-live="polite"></span>
@@ -232,7 +232,7 @@
     <div class="settings-modal-overlay" id="settingsModal" onclick="if (event.target === this) closeSettings()">
         <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
             <h2 id="settingsTitle">Connect NVIDIA NIM</h2>
-            <p>Your key is stored only in this browser's local storage and sent directly to the NVIDIA API from this page. Do not use this mode on a shared computer or public deployment.</p>
+            <p>Your key is stored in SC.AI's local application settings on this computer and is only sent to NVIDIA when you chat. It never leaves this machine and is never shared with websites.</p>
             <label for="apiKeyInput">NVIDIA API key</label>
             <input class="api-key-input" id="apiKeyInput" type="password" autocomplete="off" placeholder="nvapi-...">
             <div class="settings-actions">
@@ -271,8 +271,9 @@
 
     <script>
         // ============================================================
-        // SC.AI — NVIDIA NIM chat. The key is intentionally kept in
-        // browser localStorage so this standalone file needs no backend.
+        // SC.AI — NVIDIA NIM chat. The key is stored by the local SC.AI
+        // server (never in this page), and all requests are proxied
+        // through that server, so the key is never exposed to websites.
         // ============================================================
         const NIM_API_URL = '/api/chat';
         const NIM_MODELS_URL = '/api/models';
@@ -429,6 +430,19 @@
             // which inserts a newline.
         }
 
+        // Show which browser / dedicated profile SC.AI is running on.
+        async function loadRuntimeInfo() {
+            try {
+                const response = await fetch('/api/info', { cache: 'no-store' });
+                if (!response.ok) return;
+                const info = await response.json();
+                if (info && info.browserName) {
+                    document.getElementById('chatHeaderMeta').textContent =
+                        info.browserName + ' · dedicated SC.AI profile';
+                }
+            } catch (_) {}
+        }
+
         function addMessage(role, text) {
             const empty = document.getElementById('chatEmpty');
             if (empty) empty.remove();
@@ -565,6 +579,7 @@
             });
         }
         loadApiKey().then(function () { if (savedApiKey) loadModels(); });
+        loadRuntimeInfo();
         updateApiKeyStatus();
         renderSavedMessages();
 
