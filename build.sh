@@ -4,7 +4,7 @@
 # Produces two standalone binaries (no Python required on the target system):
 #   build/dist/sc-ai-launcher   — the GUI the user launches from the menu
 #   build/dist/sc-ai-runtime    — the Selenium runtime (server + browser)
-#   build/dist/sc-ai-icon.png   — the application icon
+#   build/dist/sc-ai-icon.png   — a copy of launcher/icon.png
 set -euo pipefail
 cd "$(dirname "$0")"
 
@@ -31,7 +31,12 @@ fi
 "$VENV/bin/pip" install -r requirements.txt
 
 # ---- icon -----------------------------------------------------------------
-"$VENV/bin/python" build/make_icon.py --out launcher/icon.png
+# Supply your own PNG at launcher/icon.png. It is embedded into the launcher
+# and installed as the KDE application icon; no icon is generated for you.
+if [ ! -s "$ROOT/launcher/icon.png" ]; then
+    echo "Missing custom icon: place your PNG at launcher/icon.png" >&2
+    exit 1
+fi
 
 # ---- PyInstaller ----------------------------------------------------------
 # Never leave a partially built installation available. The install script
