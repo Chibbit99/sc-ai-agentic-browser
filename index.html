@@ -63,6 +63,41 @@
     .theme-toggle:hover { background-color: var(--border); }
 
     .header-actions { display: flex; align-items: center; gap: 10px; }
+    .api-key-btn {
+        border: 1px solid var(--border); background: var(--bg-app); color: var(--text-main);
+        padding: 7px 12px; border-radius: 8px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+        transition: var(--transition); white-space: nowrap;
+    }
+    .api-key-btn:hover { background: var(--border); }
+    .api-key-status { color: var(--success); font-size: 0.72rem; font-weight: 600; }
+    .settings-modal-overlay {
+        position: fixed; inset: 0; background: rgba(15, 23, 42, 0.5);
+        display: none; align-items: center; justify-content: center; z-index: 3000; padding: 16px;
+    }
+    .settings-modal-overlay.open { display: flex; }
+    .settings-modal {
+        background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px;
+        width: min(94vw, 520px); padding: 22px; box-shadow: 0 24px 80px rgba(15, 23, 42, 0.25);
+    }
+    .settings-modal h2 { font-size: 1.1rem; margin-bottom: 8px; }
+    .settings-modal p { color: var(--text-muted); font-size: 0.82rem; line-height: 1.5; margin-bottom: 16px; }
+    .settings-modal label { display: block; font-size: 0.8rem; font-weight: 600; margin-bottom: 6px; }
+    .api-key-input {
+        width: 100%; border: 1px solid var(--border); padding: 11px 12px; border-radius: 9px;
+        background: var(--bg-app); color: var(--text-main); font-size: 0.88rem; margin-bottom: 14px;
+    }
+    .api-key-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+    .settings-actions { display: flex; justify-content: flex-end; gap: 8px; }
+    .btn.secondary { background: transparent; color: var(--text-main); border: 1px solid var(--border); }
+    .btn.secondary:hover { background: var(--border); }
+    .settings-note { font-size: 0.72rem !important; margin: 12px 0 0 !important; }
+    @media (max-width: 640px) {
+        .chat-header { padding: 12px 16px; }
+        .chat-messages, .chat-input-area { padding-left: 16px; padding-right: 16px; }
+        .chat-header-meta { display: none; }
+        .api-key-status { display: none; }
+        .api-key-btn { padding: 7px 9px; }
+    }
 
     /* ---------- Model selector button ---------- */
     .model-select-btn {
@@ -183,11 +218,28 @@
             <div class="chat-header-meta">SC AI Agentic Browser</div>
         </div>
         <div class="header-actions">
+            <span class="api-key-status" id="apiKeyStatus" aria-live="polite"></span>
+            <button class="api-key-btn" type="button" onclick="openSettings()">NIM key</button>
             <button class="model-select-btn" id="modelSelectBtn" onclick="openModelModal()">
                 <span id="modelSelectLabel">GLM 5.2</span>
                 <span class="chevron">▼</span>
             </button>
             <button class="theme-toggle" id="themeToggle" title="Toggle theme" onclick="toggleTheme()">☀️</button>
+        </div>
+    </div>
+
+    <!-- NVIDIA NIM settings modal -->
+    <div class="settings-modal-overlay" id="settingsModal" onclick="if (event.target === this) closeSettings()">
+        <div class="settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+            <h2 id="settingsTitle">Connect NVIDIA NIM</h2>
+            <p>Your key is stored only in this browser's local storage and sent directly to the NVIDIA API from this page. Do not use this mode on a shared computer or public deployment.</p>
+            <label for="apiKeyInput">NVIDIA API key</label>
+            <input class="api-key-input" id="apiKeyInput" type="password" autocomplete="off" placeholder="nvapi-...">
+            <div class="settings-actions">
+                <button class="btn secondary" type="button" onclick="clearApiKey()">Clear</button>
+                <button class="btn" type="button" onclick="saveApiKey()">Save key</button>
+            </div>
+            <p class="settings-note">Get a key from build.nvidia.com. The selected model must be available to your NIM account.</p>
         </div>
     </div>
 
@@ -219,12 +271,14 @@
 
     <script>
         // ============================================================
-        // SC.AI — chat UI only. No backend: sending a message always
-        // returns a fixed placeholder reply after a short delay.
+        // SC.AI — NVIDIA NIM chat. The key is intentionally kept in
+        // browser localStorage so this standalone file needs no backend.
         // ============================================================
-        const PLACEHOLDER_REPLY = "This is a placeholder response — chat functionality isn't connected in this demo.";
+        const NIM_API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+        const API_KEY_STORAGE = 'scai.nvidia.apiKey';
+        const CONVERSATION_STORAGE = 'scai.nvidia.messages';
 
-        // ---- Model selector (display only — does not affect the placeholder reply) ----
+        // ---- Model selector ----
         const MODELS = [
             { id: 'glm-5.2', name: 'GLM 5.2', desc: 'Default general-purpose model' },
             { id: 'qwen-3.6', name: 'Qwen 3.6', desc: 'Fast, lightweight responses' },
@@ -232,6 +286,38 @@
             { id: 'polly', name: 'Polly', desc: 'Creative writing focus' }
         ];
         let selectedModel = MODELS[0].id;
+        let messages = loadMessages();
+
+        function loadMessages() {
+            try {
+                const saved = JSON.parse(localStorage.getItem(CONVERSATION_STORAGE) || '[]');
+                return Array.isArray(saved) ? saved : [];
+            } catch (error) {
+                return [];
+            }
+        }
+        function getApiKey() { return localStorage.getItem(API_KEY_STORAGE) || ''; }
+        function updateApiKeyStatus() {
+            document.getElementById('apiKeyStatus').textContent = getApiKey() ? '● connected' : '';
+        }
+        function openSettings() {
+            document.getElementById('apiKeyInput').value = getApiKey();
+            document.getElementById('settingsModal').classList.add('open');
+            document.getElementById('apiKeyInput').focus();
+        }
+        function closeSettings() { document.getElementById('settingsModal').classList.remove('open'); }
+        function saveApiKey() {
+            const key = document.getElementById('apiKeyInput').value.trim();
+            if (!key) { clearApiKey(); return; }
+            localStorage.setItem(API_KEY_STORAGE, key);
+            updateApiKeyStatus();
+            closeSettings();
+        }
+        function clearApiKey() {
+            localStorage.removeItem(API_KEY_STORAGE);
+            updateApiKeyStatus();
+            document.getElementById('apiKeyInput').value = '';
+        }
 
         function openModelModal() {
             document.getElementById('modelModal').classList.add('open');
@@ -274,7 +360,7 @@
             });
         }
         document.addEventListener('keydown', function (e) {
-            if (e.key === 'Escape') closeModelModal();
+            if (e.key === 'Escape') { closeModelModal(); closeSettings(); }
         });
 
         function toggleTheme() {
@@ -331,24 +417,56 @@
             if (el) el.remove();
         }
 
-        function handleSend(event) {
+        async function handleSend(event) {
             event.preventDefault();
             const input = document.getElementById('chatInput');
             const text = input.value.trim();
             if (!text) return false;
 
+            const apiKey = getApiKey();
+            if (!apiKey) {
+                openSettings();
+                return false;
+            }
+
             addMessage('user', text);
+            messages.push({ role: 'user', content: text });
             input.value = '';
             input.style.height = 'auto';
-
             showTyping();
-            setTimeout(function () {
-                removeTyping();
-                addMessage('ai', PLACEHOLDER_REPLY);
-            }, 700);
+            const sendButton = document.querySelector('#chatForm .btn');
+            sendButton.disabled = true;
 
+            try {
+                const response = await fetch(NIM_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey },
+                    body: JSON.stringify({ model: selectedModel, messages: messages, temperature: 0.7, max_tokens: 1024, stream: false })
+                });
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error && data.error.message ? data.error.message : 'NVIDIA NIM request failed (' + response.status + ')');
+                const reply = data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content;
+                if (!reply) throw new Error('NVIDIA NIM returned no message. Check the selected model and API key.');
+                messages.push({ role: 'assistant', content: reply });
+                localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(messages.slice(-20)));
+                addMessage('ai', reply);
+            } catch (error) {
+                messages.pop();
+                addMessage('ai', 'Unable to reach NVIDIA NIM: ' + (error.message || 'Unknown error'));
+            } finally {
+                removeTyping();
+                sendButton.disabled = false;
+            }
             return false;
         }
+
+        function renderSavedMessages() {
+            messages.forEach(function (message) {
+                addMessage(message.role === 'user' ? 'user' : 'ai', message.content);
+            });
+        }
+        updateApiKeyStatus();
+        renderSavedMessages();
 
         // Auto-grow the textarea as the user types.
         document.getElementById('chatInput').addEventListener('input', function () {
