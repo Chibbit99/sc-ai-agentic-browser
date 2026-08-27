@@ -56,21 +56,23 @@ else:
 html_file_path = base_path / "index.html"
 file_url = html_file_path.as_uri()
 
-browser_path = next((shutil.which(browser) for browser in possible_browsers if shutil.which(browser)), None)
-persistent_profile = create_profile_path()
+# PyInstaller extracts bundled files into a temporary directory. Keep the
+# browser profile outside that directory so localStorage survives relaunches.
+app_data_path = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "SC.AI"
+if sys.platform == "darwin":
+    app_data_path = Path.home() / "Library" / "Application Support" / "SC.AI"
+elif sys.platform.startswith("linux"):
+    app_data_path = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "sc-ai"
+app_data_path.mkdir(parents=True, exist_ok=True)
 
+options.add_argument(f"--user-data-dir={app_data_path / 'browser-profile'}")
 
-def build_options(profile_path=None):
-    chrome_options = Options()
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--allow-file-access-from-files")
-    if profile_path:
-        chrome_options.add_argument(f"--user-data-dir={profile_path}")
-    if browser_path:
-        chrome_options.binary_location = browser_path
-    return chrome_options
+browser_path = None
+for browser in possible_browsers:
+    found_path = shutil.which(browser)
+    if found_path:
+        browser_path = found_path
+        break
 
 
 try:
