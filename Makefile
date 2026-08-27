@@ -1,4 +1,4 @@
-.PHONY: help venv build install uninstall run-dev clean
+.PHONY: help venv build install refresh-menu uninstall run-dev clean
 
 help:
 	@echo "SC.AI build targets:"
@@ -17,10 +17,13 @@ build:
 	./build.sh
 
 install:
-	./install.sh
+	bash install.sh
+
+refresh-menu:
+	bash make-desktop-entry.sh
 
 uninstall:
-	./uninstall.sh
+	bash uninstall.sh
 
 run-dev:
 	.venv/bin/python launcher/launcher.py
