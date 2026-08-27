@@ -5,6 +5,7 @@ help:
 	@echo "  make venv      Create the development virtualenv"
 	@echo "  make build     Build the PyInstaller binaries into build/dist/"
 	@echo "  make install   Install the binaries + KDE menu entry (user-local)"
+	@echo "  make refresh-menu Refresh KDE menu entry and icon"
 	@echo "  make uninstall Remove the installed binaries + menu entry (keeps your data)"
 	@echo "  make run-dev   Run the launcher from source"
 	@echo "  make clean     Remove build artifacts"

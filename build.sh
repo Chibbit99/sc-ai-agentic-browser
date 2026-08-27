@@ -13,8 +13,10 @@ VENV="$ROOT/.venv"
 PYTHON="${PYTHON:-python3}"
 RUNTIME_TMP="${XDG_CACHE_HOME:-$HOME/.cache}/sc-ai/pyi"
 
-# This checkout may be unpacked or cloned without executable mode bits.
-# Build scripts are run explicitly with bash so this works either way.
+# A clone may have lost executable mode bits. This line runs because the
+# script is already being interpreted by bash, and repairs the checkout for
+# the next invocation (`./build.sh`).
+chmod +x "$ROOT/build.sh" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/make-desktop-entry.sh" 2>/dev/null || true
 
 if ! command -v "$PYTHON" >/dev/null 2>&1; then
     echo "python3 is required to build SC.AI." >&2

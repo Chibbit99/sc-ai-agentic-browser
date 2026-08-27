@@ -48,6 +48,7 @@ sc-ai/
 ├── build.sh               # PyInstaller build → build/dist/
 ├── install.sh             # User-local install + menu registration
 ├── make-desktop-entry.sh  # Refresh menu/icon without rebuilding
+├── install-desktop.sh     # Compatibility alias for menu refresh
 ├── uninstall.sh
 ├── requirements.txt
 └── Makefile
@@ -175,7 +176,8 @@ Then:
 
 Uninstall (keeps your data): `bash uninstall.sh` or `make uninstall`.
 If you rebuilt or moved the installed files and only need to refresh KDE's
-menu entry, run `bash make-desktop-entry.sh` (or `make refresh-menu`).
+menu entry, run `bash make-desktop-entry.sh` (or `bash install-desktop.sh`,
+or `make refresh-menu`).
 
 The scripts are intentionally documented with `bash script.sh` rather than
 `./script.sh`, because Git checkouts, ZIP archives, and some file systems can
@@ -225,7 +227,8 @@ server.
 | "SC.AI is already running" | Another SC.AI session is using the profile. Close the browser window first. |
 | Snap browser fails to start | Prefer a native or Flatpak install of that browser. |
 | Dev run: `ModuleNotFoundError: _tkinter` | Install `python3-tk` (Ubuntu/Kubuntu). Installed users don't need it. |
-| `./build.sh: Permission denied` | Run `bash build.sh`; or restore permissions with `chmod +x build.sh install.sh uninstall.sh`. |
+| `./build.sh: Permission denied` | Run `bash build.sh`; it now repairs permissions automatically. Future checkouts can also restore them with `chmod +x build.sh install.sh uninstall.sh make-desktop-entry.sh`. |
+| `./uninstall.sh: Permission denied` | Run `bash uninstall.sh`; the uninstaller now repairs its own permission for later use. |
 | Menu entry does not appear immediately | Run `kbuildsycoca6 --noincremental` (KDE 6) or `kbuildsycoca5 --noincremental` (KDE 5), then search for SC.AI again. |
 
 ---

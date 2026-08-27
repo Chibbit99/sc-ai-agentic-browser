@@ -1,19 +1,21 @@
 #!/usr/bin/env bash
 # Install the built SC.AI binaries + KDE menu entry for the current user.
-#
-# Everything is installed under ~/.local (override with SCAI_PREFIX), which
-# is the standard per-user location and requires no root. The .desktop file
-# is generated with the real install paths — no development paths leak in.
+# Run with: bash install.sh (or ./install.sh after bash build.sh).
 set -euo pipefail
 cd "$(dirname "$0")"
 
+ROOT="$PWD"
 PREFIX="${SCAI_PREFIX:-$HOME/.local}"
 BIN_DIR="$PREFIX/bin"
 APP_DIR="$PREFIX/share/applications"
 ICON_DIR="$PREFIX/share/icons/hicolor/512x512/apps"
 
+# Repair executable mode bits in a checkout that was cloned with 0644 files.
+chmod +x "$ROOT/build.sh" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/make-desktop-entry.sh" 2>/dev/null || true
+
 if [ ! -x build/dist/sc-ai-launcher ] || [ ! -x build/dist/sc-ai-runtime ]; then
-    echo "Build artifacts not found in build/dist/. Run ./build.sh first." >&2
+    echo "SC.AI has not been built yet." >&2
+    echo "Run: bash build.sh" >&2
     exit 1
 fi
 
@@ -42,6 +44,6 @@ echo "  Launcher: $BIN_DIR/sc-ai-launcher"
 echo "  Runtime:  $BIN_DIR/sc-ai-runtime"
 echo "  Menu:     $APP_DIR/sc-ai.desktop"
 echo
-echo "Open the application menu and search for SC.AI, right-click it and"
-echo "choose 'Add to Favorites' to pin it to the taskbar, or run:"
-echo "  $BIN_DIR/sc-ai-launcher"
+echo "Open the application menu and search for SC.AI."
+echo "To pin it: right-click SC.AI → Add to Favorites."
+echo "To uninstall later: bash $ROOT/uninstall.sh"
