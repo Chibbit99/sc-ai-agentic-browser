@@ -498,6 +498,17 @@
                     try { const errorData = await response.json(); detail = errorData.error && errorData.error.message ? errorData.error.message : detail; } catch (_) {}
                     throw new Error(detail);
                 }
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.indexOf('text/event-stream') === -1) {
+                    // Some NIM endpoints return a plain JSON response instead of SSE.
+                    const data = await response.json();
+                    const plainReply = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+                    if (!plainReply) throw new Error('NVIDIA NIM returned an unexpected response.');
+                    const plainMessage = addMessage('ai', plainReply);
+                    messages.push({ role: 'assistant', content: plainReply });
+                    localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(messages.slice(-20)));
+                    return false;
+                }
                 if (!response.body) throw new Error('Streaming is unavailable in this browser.');
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
@@ -506,10 +517,10 @@
                 const message = addMessage('ai', '');
                 const bubble = message.querySelector('.chat-msg-bubble');
                 const processEvents = function (flush) {
-                    const events = buffer.split(/\\n\\s*\\n/);
+                    const events = buffer.split(/\n\s*\n/);
                     buffer = flush ? '' : (events.pop() || '');
                     events.forEach(function (event) {
-                        event.split('\\n').forEach(function (line) {
+                        event.split('\n').forEach(function (line) {
                             line = line.trim();
                             if (!line.startsWith('data:')) return;
                             const payload = line.slice(5).trim();
@@ -530,7 +541,7 @@
                 while (true) {
                     const chunk = await reader.read();
                     if (chunk.done) break;
-                    buffer += decoder.decode(chunk.value, { stream: true }).replace(/\\r/g, '');
+                    buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r/g, '');
                     processEvents(false);
                 }
                 buffer += decoder.decode();
