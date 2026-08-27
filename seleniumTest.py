@@ -12,13 +12,15 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.error import HTTPError, URLError
+from urllib.request import Request, urlopen
 
 from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 
-BUILD_VERSION = "scai-launcher-2026-08-27-v4"
+BUILD_VERSION = "scai-launcher-2026-08-27-v5"
+NVIDIA_API = "https://integrate.api.nvidia.com/v1"
 
 
 def app_data_path():
@@ -56,12 +58,15 @@ def write_config(value):
 
 class AppHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        route = urlparse(self.path).path
+        route = self.path.split("?", 1)[0]
         if route == "/api/config":
             self.send_json({"hasApiKey": bool(read_config().get("apiKey"))})
             return
         if route == "/api/config/key":
             self.send_json({"apiKey": read_config().get("apiKey", "")})
+            return
+        if route == "/api/models":
+            self.proxy_models()
             return
         if route == "/":
             try:
@@ -77,12 +82,22 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_error(404)
 
     def do_POST(self):
-        if urlparse(self.path).path != "/api/config":
-            self.send_error(404)
+        route = self.path.split("?", 1)[0]
+        if route == "/api/config":
+            self.save_config()
             return
+        if route == "/api/chat":
+            self.proxy_chat()
+            return
+        self.send_error(404)
+
+    def read_body(self):
+        length = int(self.headers.get("Content-Length", "0"))
+        return self.rfile.read(length)
+
+    def save_config(self):
         try:
-            length = int(self.headers.get("Content-Length", "0"))
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = json.loads(self.read_body() or b"{}")
             api_key = str(payload.get("apiKey", "")).strip()
             config = read_config()
             if api_key:
@@ -93,6 +108,56 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json({"saved": True, "hasApiKey": bool(api_key)})
         except (ValueError, OSError, json.JSONDecodeError) as error:
             self.send_json({"saved": False, "error": str(error)}, 400)
+
+    def proxy_models(self):
+        api_key = read_config().get("apiKey", "")
+        if not api_key:
+            self.send_json({"error": "No NVIDIA API key saved"}, 401)
+            return
+        try:
+            request = Request(f"{NVIDIA_API}/models", headers={"Authorization": f"Bearer {api_key}"})
+            with urlopen(request, timeout=30) as response:
+                self.send_response(response.status)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Cache-Control", "no-store")
+                self.end_headers()
+                self.wfile.write(response.read())
+        except (HTTPError, URLError, OSError) as error:
+            self.send_json({"error": f"NVIDIA model request failed: {error}"}, 502)
+
+    def proxy_chat(self):
+        api_key = read_config().get("apiKey", "")
+        if not api_key:
+            self.send_json({"error": "No NVIDIA API key saved"}, 401)
+            return
+        try:
+            request = Request(
+                f"{NVIDIA_API}/chat/completions",
+                data=self.read_body(),
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                    "Accept": "text/event-stream",
+                },
+                method="POST",
+            )
+            with urlopen(request, timeout=300) as response:
+                self.send_response(response.status)
+                self.send_header("Content-Type", "text/event-stream")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Connection", "keep-alive")
+                self.end_headers()
+                while True:
+                    chunk = response.read(4096)
+                    if not chunk:
+                        break
+                    self.wfile.write(chunk)
+                    self.wfile.flush()
+        except HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            self.send_json({"error": detail or str(error)}, error.code)
+        except (URLError, OSError) as error:
+            self.send_json({"error": f"NVIDIA chat request failed: {error}"}, 502)
 
     def send_json(self, value, status=200):
         content = json.dumps(value).encode("utf-8")

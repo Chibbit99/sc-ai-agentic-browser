@@ -274,8 +274,8 @@
         // SC.AI — NVIDIA NIM chat. The key is intentionally kept in
         // browser localStorage so this standalone file needs no backend.
         // ============================================================
-        const NIM_API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
-        const NIM_MODELS_URL = 'https://integrate.api.nvidia.com/v1/models';
+        const NIM_API_URL = '/api/chat';
+        const NIM_MODELS_URL = '/api/models';
         const API_KEY_STORAGE = 'scai.nvidia.apiKey';
         const CONVERSATION_STORAGE = 'scai.nvidia.messages';
 
@@ -354,7 +354,7 @@
 
         async function loadModels() {
             try {
-                const response = await fetch(NIM_MODELS_URL, { headers: { 'Authorization': 'Bearer ' + savedApiKey } });
+                const response = await fetch(NIM_MODELS_URL, { cache: 'no-store' });
                 if (!response.ok) return;
                 const data = await response.json();
                 const remoteModels = (data.data || []).map(function (model) {
@@ -490,7 +490,7 @@
             try {
                 const response = await fetch(NIM_API_URL, {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + apiKey, 'Accept': 'text/event-stream' },
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
                     body: JSON.stringify({ model: selectedModel, messages: messages, temperature: 0.7, max_tokens: 1024, stream: true })
                 });
                 if (!response.ok) {
