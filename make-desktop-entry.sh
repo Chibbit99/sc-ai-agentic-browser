@@ -3,6 +3,8 @@
 # Usage: bash make-desktop-entry.sh [optional-prefix]
 set -euo pipefail
 cd "$(dirname "$0")"
+ROOT="$PWD"
+chmod +x "$ROOT/build.sh" "$ROOT/install.sh" "$ROOT/uninstall.sh" "$ROOT/make-desktop-entry.sh" 2>/dev/null || true
 
 PREFIX="${1:-${SCAI_PREFIX:-$HOME/.local}}"
 BIN_DIR="$PREFIX/bin"
