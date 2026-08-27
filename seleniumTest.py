@@ -19,7 +19,7 @@ from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 
-BUILD_VERSION = "scai-launcher-2026-08-27-v8"
+BUILD_VERSION = "scai-launcher-2026-08-27-v7"
 NVIDIA_API = "https://integrate.api.nvidia.com/v1"
 
 
@@ -200,115 +200,19 @@ class AppHandler(BaseHTTPRequestHandler):
         pass
 
 
-def browser_candidates():
-    """Yield (kind, path) for each installed browser, best first."""
-    definitions = (
-        (
-            "chrome",
-            ("google-chrome-stable", "google-chrome", "chromium", "chromium-browser", "chrome"),
-            (
-                "%PROGRAMFILES%\\Google\\Chrome\\Application\\chrome.exe",
-                "%PROGRAMFILES(X86)%\\Google\\Chrome\\Application\\chrome.exe",
-                "%LOCALAPPDATA%\\Google\\Chrome\\Application\\chrome.exe",
-            ),
-            ("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",),
-        ),
-        (
-            "edge",
-            ("microsoft-edge", "microsoft-edge-stable", "msedge"),
-            (
-                "%PROGRAMFILES%\\Microsoft\\Edge\\Application\\msedge.exe",
-                "%PROGRAMFILES(X86)%\\Microsoft\\Edge\\Application\\msedge.exe",
-            ),
-            ("/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",),
-        ),
-        (
-            "brave",
-            ("brave-browser", "brave"),
-            ("%LOCALAPPDATA%\\BraveSoftware\\Brave-Browser\\Application\\brave.exe",),
-            ("/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",),
-        ),
-        (
-            "firefox",
-            ("firefox",),
-            (
-                "%PROGRAMFILES%\\Mozilla Firefox\\firefox.exe",
-                "%PROGRAMFILES(X86)%\\Mozilla Firefox\\firefox.exe",
-            ),
-            ("/Applications/Firefox.app/Contents/MacOS/firefox",),
-        ),
-        (
-            "opera",
-            ("opera",),
-            ("%PROGRAMFILES%\\Opera\\launcher.exe",),
-            ("/Applications/Opera.app/Contents/MacOS/Opera",),
-        ),
-    )
-    for kind, names, windows_paths, macos_paths in definitions:
-        found = False
-        for name in names:
-            path = shutil.which(name)
-            if path:
-                yield kind, path
-                found = True
-                break
-        if found:
-            continue
-        if sys.platform == "win32":
-            for template in windows_paths:
-                path = os.path.expandvars(template)
-                if os.path.exists(path):
-                    yield kind, path
-                    break
-        elif sys.platform == "darwin":
-            for path in macos_paths:
-                if os.path.exists(path):
-                    yield kind, path
-                    break
+def find_browser():
+    browsers = ("chromium-browser", "chromium", "google-chrome-stable", "google-chrome", "chrome")
+    return next((path for name in browsers if (path := shutil.which(name))), None)
 
 
-def launch_browser(url):
-    """Launch the first installed browser and open url in its main tab."""
-    for kind, path in browser_candidates():
-        try:
-            if kind == "firefox":
-                from selenium.webdriver.firefox.options import Options as FirefoxOptions
-
-                options = FirefoxOptions()
-                if path:
-                    options.binary_location = path
-                driver = webdriver.Firefox(options=options)
-            elif kind == "edge":
-                from selenium.webdriver.edge.options import Options as EdgeOptions
-
-                options = EdgeOptions()
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--disable-gpu")
-                if path:
-                    options.binary_location = path
-                driver = webdriver.Edge(options=options)
-            elif kind == "opera":
-                from selenium.webdriver.opera.options import Options as OperaOptions
-
-                options = OperaOptions()
-                if path:
-                    options.binary_location = path
-                driver = webdriver.Opera(options=options)
-            else:  # chrome / brave (Chromium-based)
-                options = Options()
-                options.add_argument("--no-sandbox")
-                options.add_argument("--disable-dev-shm-usage")
-                options.add_argument("--disable-gpu")
-                if path:
-                    options.binary_location = path
-                driver = webdriver.Chrome(options=options)
-            print(f"[browser] {kind} ({path or 'auto-detected'})")
-            driver.get(url)
-            return driver
-        except Exception as error:
-            print(f"[browser] {kind} unavailable: {error}")
-    raise RuntimeError("No supported browser found. Install Chrome, Chromium, Edge, Brave, Firefox, or Opera.")
+def build_options(browser_path):
+    options = Options()
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    if browser_path:
+        options.binary_location = browser_path
+    return options
 
 
 if getattr(sys, "frozen", False):
@@ -324,15 +228,11 @@ driver = None
 try:
     print(f"SC.AI launcher {BUILD_VERSION}")
     print(f"Local config: {CONFIG_FILE}")
-    driver = launch_browser(f"http://127.0.0.1:{port}/")
-    main_tab = driver.current_window_handle
-    print("SC.AI is running as a desktop-style browser window.")
-    print("Close the SC.AI tab to quit the whole window.")
+    driver = webdriver.Chrome(options=build_options(find_browser()))
+    driver.get(f"http://127.0.0.1:{port}/")
     while True:
         try:
-            if main_tab not in driver.window_handles:
-                print("\nSC.AI tab was closed; closing the browser window.")
-                break
+            _ = driver.current_url
             time.sleep(0.5)
         except WebDriverException:
             print("\nBrowser window was closed by the user.")
