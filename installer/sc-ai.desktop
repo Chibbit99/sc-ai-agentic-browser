@@ -19,3 +19,5 @@ Categories=Network;Utility;
 Keywords=AI;chat;browser;NVIDIA;selenium
 StartupNotify=true
 StartupWMClass=sc-ai
+X-KDE-StartupNotify=true
+X-GNOME-UsesNotifications=true

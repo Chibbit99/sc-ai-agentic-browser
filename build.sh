@@ -34,6 +34,8 @@ fi
 "$VENV/bin/python" build/make_icon.py --out launcher/icon.png
 
 # ---- PyInstaller ----------------------------------------------------------
+# Never leave a partially built installation available. The install script
+# also validates all three artifacts before replacing the user's binaries.
 mkdir -p build/dist build/work
 rm -rf build/dist/*
 
@@ -63,6 +65,14 @@ rm -rf build/dist/*
     launcher/launcher.py
 
 cp launcher/icon.png build/dist/sc-ai-icon.png
+
+# Fail the build if any artifact is absent or not a regular file.
+for artifact in build/dist/sc-ai-launcher build/dist/sc-ai-runtime build/dist/sc-ai-icon.png; do
+    if [ ! -f "$artifact" ]; then
+        echo "Build failed: missing $artifact" >&2
+        exit 1
+    fi
+done
 
 echo
 echo "Build complete. Artifacts in build/dist/:"
