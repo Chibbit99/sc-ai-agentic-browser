@@ -1,0 +1,7 @@
+# SC.AI runtime dependencies.
+# Selenium >= 4.6 includes Selenium Manager, which downloads the matching
+# browser driver (chromedriver / geckodriver) automatically on first use.
+selenium>=4.20
+
+# Build tooling (only needed when running ./build.sh).
+pyinstaller>=6.0

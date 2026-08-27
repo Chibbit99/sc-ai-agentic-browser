@@ -1,0 +1,13 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# PyInstaller build output
+build/work/
+build/dist/
+build/*.spec
+
+# Local data (never commit profiles or keys)
+.config/
+*.log
