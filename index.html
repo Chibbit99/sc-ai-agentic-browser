@@ -275,6 +275,7 @@
         // browser localStorage so this standalone file needs no backend.
         // ============================================================
         const NIM_API_URL = 'https://integrate.api.nvidia.com/v1/chat/completions';
+        const NIM_MODELS_URL = 'https://integrate.api.nvidia.com/v1/models';
         const API_KEY_STORAGE = 'scai.nvidia.apiKey';
         const CONVERSATION_STORAGE = 'scai.nvidia.messages';
 
@@ -338,6 +339,7 @@
                 const response = await fetch('/api/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ apiKey: key }) });
                 if (!response.ok) throw new Error('Key could not be saved');
                 savedApiKey = key;
+                if (key) loadModels();
             } catch (error) {
                 localStorage.setItem(API_KEY_STORAGE, key);
                 savedApiKey = key;
@@ -348,6 +350,23 @@
         function clearApiKey() {
             document.getElementById('apiKeyInput').value = '';
             saveApiKey();
+        }
+
+        async function loadModels() {
+            try {
+                const response = await fetch(NIM_MODELS_URL, { headers: { 'Authorization': 'Bearer ' + savedApiKey } });
+                if (!response.ok) return;
+                const data = await response.json();
+                const remoteModels = (data.data || []).map(function (model) {
+                    return { id: model.id, name: model.id, desc: 'Available NVIDIA NIM model' };
+                });
+                if (remoteModels.length) {
+                    MODELS.length = 0;
+                    remoteModels.forEach(function (model) { MODELS.push(model); });
+                    selectedModel = MODELS[0].id;
+                    document.getElementById('modelSelectLabel').textContent = MODELS[0].name;
+                }
+            } catch (_) {}
         }
 
         function openModelModal() {
@@ -521,7 +540,7 @@
                 addMessage(message.role === 'user' ? 'user' : 'ai', message.content);
             });
         }
-        loadApiKey();
+        loadApiKey().then(function () { if (savedApiKey) loadModels(); });
         updateApiKeyStatus();
         renderSavedMessages();
 
