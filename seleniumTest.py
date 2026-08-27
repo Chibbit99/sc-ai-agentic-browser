@@ -37,6 +37,17 @@ else:
 html_file_path = base_path / "index.html"
 file_url = html_file_path.as_uri()
 
+# PyInstaller extracts bundled files into a temporary directory. Keep the
+# browser profile outside that directory so localStorage survives relaunches.
+app_data_path = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming")) / "SC.AI"
+if sys.platform == "darwin":
+    app_data_path = Path.home() / "Library" / "Application Support" / "SC.AI"
+elif sys.platform.startswith("linux"):
+    app_data_path = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "sc-ai"
+app_data_path.mkdir(parents=True, exist_ok=True)
+
+options.add_argument(f"--user-data-dir={app_data_path / 'browser-profile'}")
+
 browser_path = None
 for browser in possible_browsers:
     found_path = shutil.which(browser)
