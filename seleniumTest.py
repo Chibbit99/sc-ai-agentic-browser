@@ -19,7 +19,7 @@ from selenium import webdriver
 from selenium.common.exceptions import WebDriverException
 from selenium.webdriver.chrome.options import Options
 
-BUILD_VERSION = "scai-launcher-2026-08-27-v6"
+BUILD_VERSION = "scai-launcher-2026-08-27-v7"
 NVIDIA_API = "https://integrate.api.nvidia.com/v1"
 
 
@@ -147,22 +147,38 @@ class AppHandler(BaseHTTPRequestHandler):
             )
             with urlopen(request, timeout=300) as response:
                 print(f"[NVIDIA upstream] chat status {response.status}")
-                self.send_response(response.status)
-                self.send_header("Content-Type", "text/event-stream")
-                self.send_header("Cache-Control", "no-cache")
-                self.send_header("Transfer-Encoding", "chunked")
-                self.end_headers()
-                while True:
-                    chunk = response.read(8192)
-                    if not chunk:
-                        break
-                    # Normalize CRLF to LF so SSE events are separated by \n\n,
-                    # which the browser's streaming parser expects.
-                    chunk = chunk.replace(b"\r\n", b"\n")
-                    self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
+                upstream_type = response.headers.get("Content-Type", "")
+                if "text/event-stream" in upstream_type:
+                    # Stream SSE line-by-line. Reading 8KB chunks would make
+                    # http.client accumulate many events before returning, so
+                    # the browser would see the whole reply arrive at once.
+                    # Each readline() returns as soon as a line is available,
+                    # so tokens reach the browser as they are generated.
+                    self.send_response(response.status)
+                    self.send_header("Content-Type", "text/event-stream")
+                    self.send_header("Cache-Control", "no-cache")
+                    self.send_header("Transfer-Encoding", "chunked")
+                    self.end_headers()
+                    while True:
+                        line = response.readline()
+                        if not line:
+                            break
+                        # Normalize CRLF to LF so events are separated by \n\n.
+                        line = line.replace(b"\r\n", b"\n")
+                        self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
+                        self.wfile.flush()
+                    self.wfile.write(b"0\r\n\r\n")
                     self.wfile.flush()
-                self.wfile.write(b"0\r\n\r\n")
-                self.wfile.flush()
+                else:
+                    # Non-streaming JSON response: forward with the upstream
+                    # content type so the page's JSON fallback path handles it.
+                    body = response.read()
+                    self.send_response(response.status)
+                    self.send_header("Content-Type", upstream_type or "application/json")
+                    self.send_header("Content-Length", str(len(body)))
+                    self.send_header("Cache-Control", "no-store")
+                    self.end_headers()
+                    self.wfile.write(body)
         except HTTPError as error:
             detail = error.read().decode("utf-8", errors="replace")
             print(f"[NVIDIA upstream] error {error.code}: {detail[:300]}")
