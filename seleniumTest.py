@@ -75,6 +75,7 @@ for browser in possible_browsers:
         break
 
 
+driver = None
 try:
     try:
         driver = webdriver.Chrome(options=build_options(persistent_profile))
