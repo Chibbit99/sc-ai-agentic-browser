@@ -20,6 +20,7 @@
         --success: #10b981;
         --transition: all 0.2s ease;
         --error: #ef4444;
+        --code-bg: #eeebe3;
     }
     [data-theme="dark"] {
         --bg-app: #191713;
@@ -30,6 +31,7 @@
         --accent: #5fbdb6;
         --accent-rgb: 95, 189, 182;
         --accent-hover: #7ccec8;
+        --code-bg: #2b2822;
     }
 
     body {
@@ -187,6 +189,15 @@
     }
     .chat-msg.ai .chat-msg-bubble { background: var(--bg-card); border: 1px solid var(--border); border-top-left-radius: 4px; }
     .chat-msg.user .chat-msg-bubble { background: var(--accent); color: white; border-top-right-radius: 4px; }
+    .chat-msg-bubble p { margin: 0 0 0.65em; }
+    .chat-msg-bubble p:last-child { margin-bottom: 0; }
+    .chat-msg-bubble strong { font-weight: 750; }
+    .chat-msg-bubble em { font-style: italic; }
+    .chat-msg-bubble code { background: var(--code-bg); padding: 0.12em 0.35em; border-radius: 4px; font-family: monospace; font-size: 0.9em; }
+    .chat-msg-bubble pre { background: var(--code-bg); color: var(--text-main); padding: 10px 12px; border-radius: 8px; overflow-x: auto; margin: 8px 0; }
+    .chat-msg-bubble pre code { background: transparent; padding: 0; }
+    .chat-msg-bubble ul, .chat-msg-bubble ol { margin: 4px 0 8px 20px; }
+    .chat-msg-bubble a { color: var(--accent); text-decoration: underline; }
 
     /* ---------- Tool call display ---------- */
     .tool-call {
@@ -230,9 +241,7 @@
 
     /* ---------- Reasoning indicator ---------- */
     .reasoning-indicator {
-        display: flex; align-items: center; gap: 8px; padding: 8px 12px;
-        margin: 8px 0; border-radius: 8px; background: rgba(var(--accent-rgb), 0.05);
-        font-size: 0.8rem; color: var(--text-muted); font-style: italic;
+        display: none;
     }
     .reasoning-icon { font-size: 0.9rem; }
 
@@ -288,6 +297,7 @@
         display: flex; flex-direction: column; flex-shrink: 0; transition: width 0.25s ease;
     }
     .tabs-panel.open { width: 320px; }
+    .continue-tools-btn { align-self: center; margin: 8px 0; }
     .tabs-panel-header {
         display: flex; align-items: center; justify-content: space-between;
         padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
@@ -432,7 +442,7 @@
         const API_KEY_STORAGE = 'scai.nvidia.apiKey';
         const CONVERSATION_STORAGE = 'scai.nvidia.messages';
         const TOOLS_URL = '/api/tools';
-        const MAX_TOOL_ROUNDS = 8; // safety limit for multi-turn tool loops
+        const MAX_TOOL_CALLS = 64; // per user request; prevents runaway agents
 
         // ---- Model selector ----
         const MODELS = [
@@ -620,6 +630,34 @@
             } catch (_) {}
         }
 
+        function markdownToHtml(text) {
+            const escaped = escapeHtml(String(text || ''));
+            const blocks = [];
+            let html = escaped.replace(/```(?:[a-zA-Z0-9_-]+)?\n?([\s\S]*?)```/g, function (_, code) {
+                blocks.push('<pre><code>' + code.trim() + '</code></pre>');
+                return '\u0000BLOCK' + (blocks.length - 1) + '\u0000';
+            });
+            html = html
+                .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+                .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+                .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+                .replace(/\*([^*\n]+)\*/g, '<em>$1</em>')
+                .replace(/^### (.+)$/gm, '<strong>$1</strong>')
+                .replace(/^## (.+)$/gm, '<strong>$1</strong>')
+                .replace(/^# (.+)$/gm, '<strong>$1</strong>')
+                .replace(/^[-*] (.+)$/gm, '<li>$1</li>')
+                .replace(/(?:<li>.*<\/li>\n?)+/g, function (list) { return '<ul>' + list + '</ul>'; })
+                .replace(/\n\n+/g, '</p><p>')
+                .replace(/\n/g, '<br>');
+            html = '<p>' + html + '</p>';
+            return html.replace(/\u0000BLOCK(\d+)\u0000/g, function (_, index) { return blocks[Number(index)]; });
+        }
+
+        function setMessageText(message, text) {
+            const bubble = message && message.querySelector('.chat-msg-bubble');
+            if (bubble) bubble.innerHTML = markdownToHtml(text);
+        }
+
         function addMessage(role, text) {
             const empty = document.getElementById('chatEmpty');
             if (empty) empty.remove();
@@ -634,7 +672,8 @@
 
             const bubble = document.createElement('div');
             bubble.className = 'chat-msg-bubble';
-            bubble.textContent = text;
+            if (role === 'user') bubble.textContent = text;
+            else bubble.innerHTML = markdownToHtml(text);
 
             msg.appendChild(avatar);
             msg.appendChild(bubble);
@@ -696,13 +735,8 @@
             container.scrollTop = container.scrollHeight;
         }
 
-        function addReasoning(text) {
-            const container = document.getElementById('chatMessages');
-            const el = document.createElement('div');
-            el.className = 'reasoning-indicator';
-            el.innerHTML = '<span class="reasoning-icon">💭</span><span>' + escapeHtml(text) + '</span>';
-            container.appendChild(el);
-            container.scrollTop = container.scrollHeight;
+        function addReasoning() {
+            // Tool cards already identify the action; do not add duplicate rows.
         }
 
         function escapeHtml(text) {
@@ -727,6 +761,24 @@
         }
 
         // Execute a tool call via the local runtime API
+        function withTabIndex(params) {
+            const result = Object.assign({}, params || {});
+            if (!Number.isInteger(result.tab_index) || result.tab_index < 0) {
+                const active = currentTabs.find(function (tab) { return tab.active; });
+                result.tab_index = active ? active.index : 0;
+            }
+            return result;
+        }
+
+        async        function withTabIndex(params) {
+            const result = Object.assign({}, params || {});
+            if (!Number.isInteger(result.tab_index) || result.tab_index < 0) {
+                const active = currentTabs.find(function (tab) { return tab.active; });
+                result.tab_index = active ? active.index : 0;
+            }
+            return result;
+        }
+
         async function executeTool(toolName, params) {
             const endpoints = {
                 'open_tab': '/api/tool/open-tab',
@@ -751,7 +803,7 @@
                     headers: { 'Content-Type': 'application/json' }
                 };
                 if (!isGet) {
-                    options.body = JSON.stringify(params || {});
+                    options.body = JSON.stringify(toolName === 'list_tabs' ? {} : withTabIndex(params));
                 }
                 const response = await fetch(endpoint, options);
                 return await response.json();
@@ -881,7 +933,7 @@
                 const currentReply = sse.getReply();
                 if (currentReply) {
                     if (!replyStarted) { removeTyping(); replyStarted = true; }
-                    bubble.textContent = currentReply;
+                    bubble.innerHTML = markdownToHtml(currentReply);
                     document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
                 }
             }
@@ -906,13 +958,34 @@
             return { reply: reply, toolCalls: toolCalls };
         }
 
-        async function processWithTools(initialMessages) {
+        let activeToolCount = 0;
+        let pendingContinuation = null;
+        async function processWithTools(initialMessages, resetCount) {
             let currentMessages = initialMessages.slice();
             let round = 0;
+            if (resetCount) activeToolCount = 0;
 
-            while (round < MAX_TOOL_ROUNDS) {
+            while (activeToolCount < MAX_TOOL_CALLS) {
                 round++;
 
+                if (activeToolCount >= MAX_TOOL_CALLS) {
+                    pendingContinuation = currentMessages;
+                    removeTyping();
+                    const container = document.getElementById('chatMessages');
+                    const button = document.createElement('button');
+                    button.className = 'btn continue-tools-btn';
+                    button.textContent = 'Continue browser actions';
+                    button.onclick = function () {
+                        button.remove();
+                        showTyping('THINKING');
+                        processWithTools(pendingContinuation, false).catch(function (error) {
+                            removeTyping();
+                            addMessage('ai', 'NVIDIA NIM error: ' + (error.message || 'Continuation failed.'));
+                        });
+                    };
+                    container.appendChild(button);
+                    return;
+                }
                 const turn = await streamTurn(currentMessages, true);
                 const reply = turn.reply;
                 const toolCalls = turn.toolCalls;
@@ -934,13 +1007,35 @@
                     if (!tc.name) continue;
 
                     let params = {};
+                    let argumentError = '';
                     try {
-                        params = JSON.parse(tc.arguments);
-                    } catch (_) {}
+                        params = JSON.parse(tc.arguments || '{}');
+                        if (!params || typeof params !== 'object' || Array.isArray(params)) throw new Error('arguments must be a JSON object');
+                    } catch (_) {
+                        argumentError = 'Invalid tool arguments. Expected a JSON object, but received: ' + String(tc.arguments || '(empty)');
+                        addToolCall(tc.name || 'Unknown tool', {}, { error: argumentError }, false);
+                        messages.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments || '{}' } }] });
+                        messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify({ error: argumentError, retryable: true, instruction: 'Retry the same tool with valid JSON object arguments.' }) });
+                        continue;
+                    }
+                    const tabTools = ['read_tab', 'search_tab', 'run_javascript', 'click_element', 'type_text'];
+                    if (tabTools.includes(tc.name) && (!Number.isInteger(params.tab_index) || params.tab_index < 0)) {
+                        const tabs = await executeTool('list_tabs', {});
+                        const active = (tabs.tabs || []).find(function (tab) { return tab.active; });
+                        if (!active) {
+                            const errorResult = { error: 'tab_index is required. Call list_tabs first, then retry with an exact tab_index.' };
+                            addToolCall(tc.name, params, errorResult, false);
+                            messages.push({ role: 'assistant', content: null, tool_calls: [{ id: tc.id, type: 'function', function: { name: tc.name, arguments: tc.arguments || '{}' } }] });
+                            messages.push({ role: 'tool', tool_call_id: tc.id, content: JSON.stringify(errorResult) });
+                            continue;
+                        }
+                        params.tab_index = active.index;
+                    }
 
-                    // Show what the agent is doing (no spinner needed here)
-                    addReasoning('Using ' + (TOOL_LABELS[tc.name] ? TOOL_LABELS[tc.name].label : tc.name) + '...');
-
+                    activeToolCount++;
+                    if (['read_tab', 'search_tab', 'run_javascript', 'click_element', 'type_text'].includes(tc.name) && !Number.isInteger(params.tab_index)) {
+                        params = withTabIndex(params);
+                    }
                     const result = await executeTool(tc.name, params);
                     addToolCall(tc.name, params, result, !result.error);
 
@@ -974,27 +1069,11 @@
                 currentMessages.push(...messages.slice(-40));
 
                 // Show thinking for the next round
-                if (round < MAX_TOOL_ROUNDS) {
-                    showTyping('THINKING');
-                }
+                if (activeToolCount < MAX_TOOL_CALLS) showTyping('THINKING');
             }
 
-            // Safety: hit the round limit — ask the model for a real final
-            // summary instead of leaving the user hanging.
             removeTyping();
-            showTyping('SUMMARIZING');
-            try {
-                const final = await streamTurn(currentMessages, false);
-                if (final.reply) {
-                    messages.push({ role: 'assistant', content: final.reply });
-                } else {
-                    addMessage('ai', 'I\'ve completed the browser actions.');
-                }
-            } catch (error) {
-                addMessage('ai', 'I\'ve completed the browser actions. (Summary failed: ' + (error.message || 'unknown error') + ')');
-            } finally {
-                removeTyping();
-            }
+            addMessage('ai', 'The 64-tool-call limit was reached. Use “Continue browser actions” to let me keep working.');
         }
 
         async function handleSend(event) {
@@ -1028,13 +1107,14 @@
                 const history = messages.slice(-20);
                 apiMessages.push(...history);
 
-                await processWithTools(apiMessages);
+                await processWithTools(apiMessages, true);
                 localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(messages.slice(-20)));
             } catch (error) {
                 messages.pop();
                 addMessage('ai', 'NVIDIA NIM error: ' + (error.message || 'Request failed. If this says Failed to fetch, check browser network access/CORS or run the rebuilt launcher.'));
             } finally {
                 removeTyping();
+                await returnToScaiTab();
                 sendButton.disabled = false;
                 if (clearButton) clearButton.disabled = false;
             }
@@ -1111,6 +1191,17 @@
                     body: JSON.stringify({ tab_index: tabIndex })
                 });
                 if (response.ok) {
+                    await refreshTabs();
+                }
+            } catch (_) {}
+        }
+
+        async function returnToScaiTab() {
+            try {
+                const tabs = await fetch('/api/tabs', { cache: 'no-store' }).then(function (r) { return r.json(); });
+                const scai = (tabs.tabs || []).find(function (tab) { return String(tab.url || '').startsWith('http://127.0.0.1:') && String(tab.url || '').endsWith('/'); });
+                if (scai) {
+                    await fetch('/api/tool/switch-tab', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ tab_index: scai.index }) });
                     await refreshTabs();
                 }
             } catch (_) {}
