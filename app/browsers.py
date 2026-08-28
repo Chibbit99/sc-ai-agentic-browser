@@ -25,6 +25,7 @@ results in a silent failure.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -174,26 +175,56 @@ def detect_browsers() -> list[DetectedBrowser]:
 
 
 def _firefox_binary(path: str) -> str | None:
-    """Return a real Firefox binary for a distro launcher or installation.
+    """Resolve a usable Firefox executable, including distro wrappers.
 
-    Firefox packages may expose a shell wrapper at /usr/bin/firefox while the
-    actual ELF binary lives below /usr/lib/firefox. Selenium requires the
-    latter when setting Options.binary_location.
+    Ubuntu/Debian's ``/usr/bin/firefox`` may be a Snap/package wrapper. It
+    cannot be passed as ``binary_location``. Prefer a real ELF Firefox binary
+    discovered from the wrapper's arguments, common install directories, or
+    Firefox's own version output. Never return the wrapper itself.
     """
     candidate = Path(path)
-    candidates = [candidate]
-    if candidate.name == "firefox":
-        candidates.extend(
-            [
-                candidate.parent / "firefox-bin",
-                Path("/usr/lib/firefox/firefox"),
-                Path("/usr/lib/firefox/firefox-bin"),
-                Path("/opt/firefox/firefox"),
-                Path.home() / ".local" / "firefox" / "firefox",
-            ]
-        )
+    candidates: list[Path] = []
+
+    # A symlink is safe to resolve; a shell script is not a Selenium binary.
+    if candidate.is_symlink():
+        candidates.append(candidate.resolve())
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        try:
+            data = candidate.read_bytes()[:4096]
+            if data.startswith(b"\\x7fELF"):
+                candidates.append(candidate)
+            elif data.startswith(b"#!"):
+                text = data.decode("utf-8", errors="ignore")
+                for match in re.findall(r"(?:^|[ =])(/[^\\s\"']*(?:firefox|firefox-bin))(?:$|[\\s\"'])", text):
+                    candidates.append(Path(match))
+        except OSError:
+            pass
+
+    roots = [
+        Path("/usr/lib/firefox"),
+        Path("/usr/lib/firefox-esr"),
+        Path("/usr/lib64/firefox"),
+        Path("/opt/firefox"),
+        Path.home() / ".local" / "firefox",
+    ]
+    for root in roots:
+        candidates.extend((root / name for name in ("firefox", "firefox-bin")))
+
+    seen: set[str] = set()
     for item in candidates:
-        if not item.is_file() or not os.access(item, os.X_OK):
+        try:
+            item = item.resolve()
+        except OSError:
+            continue
+        key = str(item)
+        if key in seen or not item.is_file() or not os.access(item, os.X_OK):
+            continue
+        seen.add(key)
+        try:
+            data = item.read_bytes()[:4]
+        except OSError:
+            continue
+        if data != b"\\x7fELF":
             continue
         try:
             result = subprocess.run(
@@ -201,12 +232,12 @@ def _firefox_binary(path: str) -> str | None:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
-                timeout=3,
+                timeout=5,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError):
             continue
-        if "firefox" in result.stdout.lower() and "mozilla" in result.stdout.lower():
+        if result.returncode == 0 and "firefox" in result.stdout.lower():
             return str(item)
     return None
 

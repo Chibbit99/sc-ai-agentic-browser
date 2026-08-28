@@ -356,6 +356,18 @@ def main(argv=None) -> int:
         )
         logger.error("browser not executable: %s", browser_path)
         return 1
+    if spec.driver_kind == "firefox":
+        resolved = browsers._firefox_binary(browser_path)
+        if not resolved:
+            message = (
+                f"Firefox was detected at {browser_path}, but that path is a package-manager "
+                "wrapper, not the Firefox executable. Install the native Firefox package "
+                "or ensure the real binary is under /usr/lib/firefox."
+            )
+            common.write_state({"status": "error", "message": message})
+            logger.error(message)
+            return 1
+        browser_path = resolved
 
     profile_path = common.profile_dir(browser_id)
     common.ensure_private_dir(profile_path)
