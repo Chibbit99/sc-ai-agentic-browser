@@ -80,24 +80,21 @@ _DRIVER_LOCK = threading.Lock()
 # System prompt for agentic browser control
 # ============================================================
 
-SYSTEM_PROMPT = """You are SC.AI, an agentic browser assistant. You can control the user's browser to help them with tasks.
+SYSTEM_PROMPT = """You are SC.AI, an agentic browser assistant. You control the user's browser using tools.
 
-When you need to browse the web, read pages, or interact with websites, use the browser tools provided. Always explain what you're doing before using a tool, and summarize what you found after.
+RULES:
+1. When you need to browse, read, search, or interact with websites, call the appropriate tool.
+2. You may call multiple tools in sequence to complete a task.
+3. After receiving tool results, summarize what you found for the user.
+4. Always explain what you did and what you found.
 
-Available browser tools:
-- open_tab: Open a new browser tab with a URL
-- read_tab: Read the current page content (text or HTML)
-- search_tab: Search for a string on the current page
-- run_javascript: Run JavaScript on the current page
-- list_tabs: See all open browser tabs
-
-Guidelines:
-- Always tell the user what you're about to do before using a tool.
-- Use read_tab after opening a page to see its content.
-- Use search_tab when looking for specific information on a page.
-- Use run_javascript for complex interactions or extracting structured data.
-- Summarize your findings clearly for the user.
-- If a tool fails, explain what went wrong and suggest alternatives.
+TOOLS:
+- open_tab: Open a URL in a new tab. Always pass a full URL.
+- read_tab: Read the page content. Pass tab_index (0-based) to target a specific tab, or omit for the active tab. Returns page text.
+- search_tab: Search page text for a string. Pass query and optionally tab_index.
+- run_javascript: Execute JS on a page and return the result. Pass code and optionally tab_index.
+- list_tabs: List all open tabs with titles and URLs.
+- switch_tab: Switch to a specific tab by index.
 """
 
 # Tool definitions for NVIDIA NIM function calling
@@ -196,6 +193,23 @@ TOOL_DEFINITIONS = [
                 "properties": {}
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "switch_tab",
+            "description": "Switch to a specific browser tab by its index",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "The 0-based index of the tab to switch to"
+                    }
+                },
+                "required": ["tab_index"]
+            }
+        }
     }
 ]
 
@@ -256,6 +270,9 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/tool/run-js":
             self.handle_run_js()
+            return
+        if route == "/api/tool/switch-tab":
+            self.handle_switch_tab()
             return
         self.send_error(404)
 
@@ -368,20 +385,52 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json({"error": "Browser not ready"}, 503)
             return
         try:
-            tabs = []
-            current = driver.current_window_handle
-            for i, handle in enumerate(driver.window_handles):
-                driver.switch_to.window(handle)
-                tabs.append({
-                    "index": i,
-                    "url": driver.current_url,
-                    "title": driver.title,
-                    "active": handle == current
-                })
-            driver.switch_to.window(current)
+            with _DRIVER_LOCK:
+                tabs = []
+                current = driver.current_window_handle
+                for i, handle in enumerate(driver.window_handles):
+                    try:
+                        driver.switch_to.window(handle)
+                        title = driver.title
+                        url = driver.current_url
+                    except Exception:
+                        title = "(loading)"
+                        url = ""
+                    tabs.append({
+                        "index": i,
+                        "handle": handle,
+                        "url": url,
+                        "title": title,
+                        "active": handle == current
+                    })
+                driver.switch_to.window(current)
             self.send_json({"tabs": tabs})
         except Exception as error:
             logger.exception("list_tabs error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_switch_tab(self):
+        """Switch to a specific tab by index."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            tab_index = payload.get("tab_index", -1)
+            with _DRIVER_LOCK:
+                handles = driver.window_handles
+                if tab_index < 0 or tab_index >= len(handles):
+                    self.send_json({"error": f"Invalid tab index {tab_index}"}, 400)
+                    return
+                driver.switch_to.window(handles[tab_index])
+                self.send_json({
+                    "success": True,
+                    "url": driver.current_url,
+                    "title": driver.title
+                })
+        except Exception as error:
+            logger.exception("switch_tab error")
             self.send_json({"error": str(error)}, 500)
 
     def handle_open_tab(self):
@@ -396,18 +445,23 @@ class AppHandler(BaseHTTPRequestHandler):
             if not url:
                 self.send_json({"error": "url is required"}, 400)
                 return
-            # Add protocol if missing
             if not url.startswith(("http://", "https://", "file://")):
                 url = "https://" + url
-            # Open new tab and navigate
-            driver.execute_script(f"window.open('{url}', '_blank');")
-            time.sleep(0.5)
-            # Switch to the new tab
-            handles = driver.window_handles
-            driver.switch_to.window(handles[-1])
-            # Wait for page to load
-            time.sleep(1)
+            with _DRIVER_LOCK:
+                driver.execute_script(f"window.open('{url}', '_blank');")
+                time.sleep(0.5)
+                handles = driver.window_handles
+                driver.switch_to.window(handles[-1])
+                try:
+                    from selenium.webdriver.support.ui import WebDriverWait
+                    from selenium.webdriver.support import expected_conditions as EC
+                    WebDriverWait(driver, 10).until(
+                        lambda d: d.execute_script('return document.readyState') in ('complete', 'interactive')
+                    )
+                except Exception:
+                    time.sleep(2)
             self.send_json({
+                "result": f"Opened {url}\nTitle: {driver.title}",
                 "success": True,
                 "url": driver.current_url,
                 "title": driver.title
@@ -426,19 +480,25 @@ class AppHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.read_body() or b"{}")
             tab_index = payload.get("tab_index", -1)
             fmt = payload.get("format", "text")
-            # Switch to the requested tab
-            handles = driver.window_handles
-            if tab_index >= 0 and tab_index < len(handles):
-                driver.switch_to.window(handles[tab_index])
-            if fmt == "html":
-                content = driver.page_source
-            else:
-                # Get visible text only
-                content = driver.execute_script("return document.body.innerText;")
+            with _DRIVER_LOCK:
+                handles = driver.window_handles
+                if tab_index >= 0 and tab_index < len(handles):
+                    driver.switch_to.window(handles[tab_index])
+                if fmt == "html":
+                    content = driver.page_source
+                else:
+                    content = driver.execute_script("return document.body.innerText;")
+                title = driver.title
+                url = driver.current_url
+            truncated = content[:30000]
+            if len(content) > 30000:
+                truncated += f"\n\n[...truncated {len(content) - 30000} chars]"
+            summary = f"Page: {title}\nURL: {url}\n\n{truncated}"
             self.send_json({
-                "url": driver.current_url,
-                "title": driver.title,
-                "content": content[:50000],  # Limit to 50KB
+                "result": summary,
+                "url": url,
+                "title": title,
+                "content": truncated,
                 "format": fmt
             })
         except Exception as error:
@@ -458,13 +518,13 @@ class AppHandler(BaseHTTPRequestHandler):
             if not query:
                 self.send_json({"error": "query is required"}, 400)
                 return
-            # Switch to the requested tab
-            handles = driver.window_handles
-            if tab_index >= 0 and tab_index < len(handles):
-                driver.switch_to.window(handles[tab_index])
-            # Get the page text and search
-            text = driver.execute_script("return document.body.innerText;")
-            # Find all occurrences with context
+            with _DRIVER_LOCK:
+                handles = driver.window_handles
+                if tab_index >= 0 and tab_index < len(handles):
+                    driver.switch_to.window(handles[tab_index])
+                text = driver.execute_script("return document.body.innerText;")
+                title = driver.title
+                url = driver.current_url
             matches = []
             lower_text = text.lower()
             lower_query = query.lower()
@@ -473,23 +533,24 @@ class AppHandler(BaseHTTPRequestHandler):
                 pos = lower_text.find(lower_query, start)
                 if pos == -1:
                     break
-                # Get context: 100 chars before and after
-                context_start = max(0, pos - 100)
-                context_end = min(len(text), pos + len(query) + 100)
-                context = text[context_start:context_end]
-                matches.append({
-                    "position": pos,
-                    "context": context
-                })
+                ctx_start = max(0, pos - 80)
+                ctx_end = min(len(text), pos + len(query) + 80)
+                matches.append(text[ctx_start:ctx_end].strip())
                 start = pos + 1
-                if len(matches) >= 10:  # Limit results
+                if len(matches) >= 5:
                     break
+            if not matches:
+                result = f"No matches for '{query}' on {title} ({url})"
+            else:
+                result = f"Found {len(matches)} match(es) for '{query}' on {title}:\n"
+                for i, m in enumerate(matches, 1):
+                    result += f"{i}. ...{m}...\n"
             self.send_json({
-                "url": driver.current_url,
-                "title": driver.title,
+                "result": result,
+                "url": url,
+                "title": title,
                 "query": query,
                 "found": len(matches) > 0,
-                "total_matches": len(matches),
                 "matches": matches
             })
         except Exception as error:
@@ -509,23 +570,26 @@ class AppHandler(BaseHTTPRequestHandler):
             if not code:
                 self.send_json({"error": "code is required"}, 400)
                 return
-            # Switch to the requested tab
-            handles = driver.window_handles
-            if tab_index >= 0 and tab_index < len(handles):
-                driver.switch_to.window(handles[tab_index])
-            # Execute the JavaScript
-            result = driver.execute_script(code)
-            # Convert result to JSON-serializable format
+            with _DRIVER_LOCK:
+                handles = driver.window_handles
+                if tab_index >= 0 and tab_index < len(handles):
+                    driver.switch_to.window(handles[tab_index])
+                result = driver.execute_script(code)
+                title = driver.title
+                url = driver.current_url
             if result is None:
-                result_str = "undefined"
+                result_str = "(undefined)"
             elif isinstance(result, str):
                 result_str = result
+            elif isinstance(result, bool):
+                result_str = str(result)
             else:
                 result_str = json.dumps(result, indent=2)
             self.send_json({
-                "url": driver.current_url,
-                "title": driver.title,
-                "result": result_str[:10000]  # Limit output size
+                "result": f"JS result from {title}:\n{result_str[:8000]}",
+                "url": url,
+                "title": title,
+                "js_result": result_str[:8000]
             })
         except Exception as error:
             logger.exception("run_js error")

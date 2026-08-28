@@ -19,6 +19,7 @@
         --accent-hover: #17544f;
         --success: #10b981;
         --transition: all 0.2s ease;
+        --error: #ef4444;
     }
     [data-theme="dark"] {
         --bg-app: #191713;
@@ -45,6 +46,9 @@
     ::-webkit-scrollbar-track { background: var(--bg-card); }
     ::-webkit-scrollbar-thumb { background: rgba(var(--accent-rgb), 0.35); border-radius: 999px; }
     ::-webkit-scrollbar-thumb:hover { background: rgba(var(--accent-rgb), 0.6); }
+
+    /* ---------- Main layout ---------- */
+    .app-body { display: flex; flex: 1; overflow: hidden; }
 
     /* ---------- Chat header ---------- */
     .chat-header {
@@ -154,6 +158,7 @@
     .model-modal-empty { padding: 20px 14px; text-align: center; color: var(--text-muted); font-size: 0.85rem; }
 
     /* ---------- Messages ---------- */
+    .chat-main { flex: 1; display: flex; flex-direction: column; overflow: hidden; min-width: 0; }
     .chat-messages {
         flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 16px;
     }
@@ -185,28 +190,43 @@
 
     /* ---------- Tool call display ---------- */
     .tool-call {
-        margin: 8px 0; padding: 10px 14px; border-radius: 10px;
-        background: rgba(var(--accent-rgb), 0.08); border: 1px solid rgba(var(--accent-rgb), 0.2);
-        font-size: 0.82rem; font-family: 'SF Mono', 'Fira Code', monospace;
+        margin: 6px 0; padding: 10px 14px; border-radius: 10px;
+        background: rgba(var(--accent-rgb), 0.06); border: 1px solid rgba(var(--accent-rgb), 0.15);
+        font-size: 0.82rem;
     }
     .tool-call-header {
-        display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-        font-weight: 600; color: var(--accent);
+        display: flex; align-items: center; gap: 8px;
+        cursor: pointer; user-select: none;
     }
-    .tool-call-icon { font-size: 0.9rem; }
-    .tool-call-name { font-weight: 700; }
-    .tool-call-status { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); }
-    .tool-call-params {
-        color: var(--text-muted); font-size: 0.78rem; margin-bottom: 6px;
-        padding: 6px 8px; background: rgba(0,0,0,0.03); border-radius: 6px;
+    .tool-call-icon {
+        width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center;
+        font-size: 0.85rem; background: rgba(var(--accent-rgb), 0.12); flex-shrink: 0;
     }
-    [data-theme="dark"] .tool-call-params { background: rgba(255,255,255,0.03); }
-    .tool-call-result {
-        padding: 6px 8px; background: rgba(0,0,0,0.03); border-radius: 6px;
-        white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto;
+    .tool-call-label { font-weight: 600; color: var(--accent); flex: 1; min-width: 0; }
+    .tool-call-summary { font-size: 0.78rem; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tool-call-badge {
+        padding: 2px 8px; border-radius: 999px; font-size: 0.68rem; font-weight: 600; flex-shrink: 0;
     }
-    [data-theme="dark"] .tool-call-result { background: rgba(255,255,255,0.03); }
-    .tool-call-error { color: #ef4444; }
+    .tool-call-badge.success { background: rgba(16,185,129,0.12); color: #10b981; }
+    .tool-call-badge.error { background: rgba(239,68,68,0.12); color: #ef4444; }
+    .tool-call-chevron { font-size: 0.65rem; color: var(--text-muted); transition: transform 0.2s; flex-shrink: 0; }
+    .tool-call.open .tool-call-chevron { transform: rotate(90deg); }
+    .tool-call-details {
+        display: none; margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(var(--accent-rgb), 0.1);
+    }
+    .tool-call.open .tool-call-details { display: block; }
+    .tool-call-detail-section { margin-bottom: 6px; }
+    .tool-call-detail-label {
+        font-size: 0.7rem; font-weight: 600; color: var(--text-muted); text-transform: uppercase;
+        letter-spacing: 0.04em; margin-bottom: 3px;
+    }
+    .tool-call-detail-content {
+        font-size: 0.78rem; color: var(--text-main); white-space: pre-wrap; word-break: break-word;
+        background: rgba(0,0,0,0.03); padding: 6px 8px; border-radius: 6px; max-height: 200px; overflow-y: auto;
+        font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    [data-theme="dark"] .tool-call-detail-content { background: rgba(255,255,255,0.03); }
+    .tool-call-error-text { color: var(--error); }
 
     /* ---------- Reasoning indicator ---------- */
     .reasoning-indicator {
@@ -250,6 +270,73 @@
         background: rgba(var(--accent-rgb), 0.15); color: var(--accent);
         margin-left: 8px;
     }
+
+    /* ---------- Tabs panel ---------- */
+    .tabs-toggle {
+        background: none; border: 1px solid var(--border); padding: 6px 10px; border-radius: 8px;
+        cursor: pointer; color: var(--text-main); display: flex; align-items: center; gap: 6px;
+        transition: var(--transition); font-size: 0.78rem; font-weight: 600; white-space: nowrap;
+    }
+    .tabs-toggle:hover { background: var(--border); }
+    .tabs-toggle .count {
+        background: rgba(var(--accent-rgb), 0.15); color: var(--accent);
+        padding: 1px 6px; border-radius: 999px; font-size: 0.68rem; font-weight: 700;
+    }
+
+    .tabs-panel {
+        width: 0; overflow: hidden; background: var(--bg-card); border-left: 1px solid var(--border);
+        display: flex; flex-direction: column; flex-shrink: 0; transition: width 0.25s ease;
+    }
+    .tabs-panel.open { width: 320px; }
+    .tabs-panel-header {
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 14px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0;
+    }
+    .tabs-panel-title { font-size: 0.88rem; font-weight: 700; }
+    .tabs-panel-actions { display: flex; gap: 6px; }
+    .tabs-panel-btn {
+        border: 1px solid var(--border); background: var(--bg-app); color: var(--text-main);
+        padding: 5px 10px; border-radius: 6px; cursor: pointer; font-size: 0.72rem; font-weight: 600;
+        transition: var(--transition);
+    }
+    .tabs-panel-btn:hover { background: var(--border); }
+    .tabs-panel-btn.accent { background: var(--accent); color: white; border-color: var(--accent); }
+    .tabs-panel-btn.accent:hover { background: var(--accent-hover); }
+    .tabs-list { flex: 1; overflow-y: auto; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+    .tab-item {
+        display: flex; align-items: center; gap: 10px; padding: 10px 12px;
+        border-radius: 8px; cursor: pointer; transition: var(--transition);
+        border: 1px solid transparent; background: transparent;
+    }
+    .tab-item:hover { background: rgba(var(--accent-rgb), 0.06); }
+    .tab-item.active { background: rgba(var(--accent-rgb), 0.1); border-color: rgba(var(--accent-rgb), 0.2); }
+    .tab-item-favicon {
+        width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0;
+        display: flex; align-items: center; justify-content: center;
+        font-size: 0.65rem; background: rgba(var(--accent-rgb), 0.1); color: var(--accent);
+    }
+    .tab-item-info { flex: 1; min-width: 0; }
+    .tab-item-title {
+        font-size: 0.8rem; font-weight: 600; color: var(--text-main);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tab-item-url {
+        font-size: 0.68rem; color: var(--text-muted);
+        overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 1px;
+    }
+    .tab-item-active-dot {
+        width: 6px; height: 6px; border-radius: 50%; background: var(--accent);
+        flex-shrink: 0; display: none;
+    }
+    .tab-item.active .tab-item-active-dot { display: block; }
+    .tabs-empty {
+        display: flex; align-items: center; justify-content: center; flex: 1;
+        color: var(--text-muted); font-size: 0.82rem; padding: 24px; text-align: center;
+    }
+
+    @media (max-width: 800px) {
+        .tabs-panel.open { width: 260px; }
+    }
 </style>
 </head>
 <body>
@@ -260,6 +347,10 @@
             <div class="chat-header-meta" id="chatHeaderMeta">SC.AI Agentic Browser</div>
         </div>
         <div class="header-actions">
+            <button class="tabs-toggle" id="tabsToggle" onclick="toggleTabsPanel()" title="Browser tabs">
+                <span>📑</span>
+                <span id="tabCountLabel">0</span>
+            </button>
             <span class="api-key-status" id="apiKeyStatus" aria-live="polite"></span>
             <button class="api-key-btn" type="button" onclick="openSettings()">NIM key</button>
             <button class="model-select-btn" id="modelSelectBtn" onclick="openModelModal()">
@@ -297,19 +388,36 @@
         </div>
     </div>
 
-    <div class="chat-messages" id="chatMessages">
-        <div class="chat-empty" id="chatEmpty">
-            <div class="chat-empty-logo">SC.AI</div>
-            <div>Start a conversation below.</div>
-            <div class="chat-empty-hint">SC.AI can control your browser to help with research and tasks.</div>
-        </div>
-    </div>
+    <div class="app-body">
+        <div class="chat-main">
+            <div class="chat-messages" id="chatMessages">
+                <div class="chat-empty" id="chatEmpty">
+                    <div class="chat-empty-logo">SC.AI</div>
+                    <div>Start a conversation below.</div>
+                    <div class="chat-empty-hint">SC.AI can control your browser to help with research and tasks.</div>
+                </div>
+            </div>
 
-    <div class="chat-input-area">
-        <form class="chat-form" id="chatForm" onsubmit="return handleSend(event)">
-            <textarea class="chat-input" id="chatInput" rows="1" placeholder="Message SC.AI..." onkeydown="handleKeydown(event)"></textarea>
-            <button class="btn" type="submit">Send</button>
-        </form>
+            <div class="chat-input-area">
+                <form class="chat-form" id="chatForm" onsubmit="return handleSend(event)">
+                    <textarea class="chat-input" id="chatInput" rows="1" placeholder="Message SC.AI..." onkeydown="handleKeydown(event)"></textarea>
+                    <button class="btn" type="submit">Send</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Browser tabs panel -->
+        <div class="tabs-panel" id="tabsPanel">
+            <div class="tabs-panel-header">
+                <div class="tabs-panel-title">Browser Tabs</div>
+                <div class="tabs-panel-actions">
+                    <button class="tabs-panel-btn accent" onclick="refreshTabs()" title="Refresh tabs list">↻ Refresh</button>
+                </div>
+            </div>
+            <div class="tabs-list" id="tabsList">
+                <div class="tabs-empty" id="tabsEmpty">No tab data yet.<br>Click Refresh or ask SC.AI to open a tab.</div>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -323,6 +431,7 @@
         const API_KEY_STORAGE = 'scai.nvidia.apiKey';
         const CONVERSATION_STORAGE = 'scai.nvidia.messages';
         const TOOLS_URL = '/api/tools';
+        const MAX_TOOL_ROUNDS = 8; // safety limit for multi-turn tool loops
 
         // ---- Model selector ----
         const MODELS = [
@@ -336,6 +445,16 @@
         let messages = loadMessages();
         let systemPrompt = '';
         let toolDefinitions = [];
+
+        // Friendly labels for tool names
+        const TOOL_LABELS = {
+            'open_tab': { icon: '🌐', label: 'Open Tab', summary: function(p) { return p.url || ''; } },
+            'read_tab': { icon: '📖', label: 'Read Page', summary: function(p) { return p.format === 'html' ? 'HTML content' : 'page text'; } },
+            'search_tab': { icon: '🔍', label: 'Search Page', summary: function(p) { return '"' + (p.query || '') + '"'; } },
+            'run_javascript': { icon: '⚡', label: 'Run JavaScript', summary: function(p) { var c = (p.code || '').split('\n')[0]; return c.length > 50 ? c.substring(0, 50) + '…' : c; } },
+            'list_tabs': { icon: '📑', label: 'List Tabs', summary: function() { return 'all open tabs'; } },
+            'switch_tab': { icon: '↗', label: 'Switch Tab', summary: function(p) { return 'tab #' + (p.tab_index != null ? p.tab_index : '?'); } }
+        };
 
         function loadMessages() {
             try {
@@ -472,8 +591,6 @@
                 e.preventDefault();
                 document.getElementById('chatForm').requestSubmit();
             }
-            // Ctrl+Enter falls through to the textarea's default behavior,
-            // which inserts a newline.
         }
 
         // Show which browser / dedicated profile SC.AI is running on.
@@ -528,33 +645,49 @@
             const el = document.createElement('div');
             el.className = 'tool-call';
 
-            const statusIcon = success ? '✓' : '✗';
-            const statusClass = success ? '' : ' tool-call-error';
+            const info = TOOL_LABELS[toolName] || { icon: '🔧', label: toolName, summary: function() { return ''; } };
+            const summary = info.summary(params || {});
 
-            let paramsStr = '';
-            if (typeof params === 'object') {
-                paramsStr = JSON.stringify(params, null, 2);
-            } else {
-                paramsStr = String(params);
-            }
-
-            let resultStr = '';
+            // Format result for display
+            var resultText = '';
             if (result !== undefined && result !== null) {
                 if (typeof result === 'object') {
-                    resultStr = JSON.stringify(result, null, 2);
+                    resultText = result.error ? result.error : (result.result || JSON.stringify(result, null, 2));
                 } else {
-                    resultStr = String(result);
+                    resultText = String(result);
                 }
+            }
+            if (success && result && result.result) {
+                resultText = result.result;
+            } else if (result && result.error) {
+                resultText = result.error;
+            }
+
+            // Format params for display (only non-default values)
+            var paramText = '';
+            if (params) {
+                var parts = [];
+                Object.keys(params).forEach(function(k) {
+                    var v = params[k];
+                    if (v !== undefined && v !== null && v !== '' && v !== -1) {
+                        parts.push(k + ': ' + (typeof v === 'string' ? v : JSON.stringify(v)));
+                    }
+                });
+                paramText = parts.join('  ·  ');
             }
 
             el.innerHTML =
-                '<div class="tool-call-header">' +
-                    '<span class="tool-call-icon">🔧</span>' +
-                    '<span class="tool-call-name">' + escapeHtml(toolName) + '</span>' +
-                    '<span class="tool-call-status' + statusClass + '">' + statusIcon + '</span>' +
+                '<div class="tool-call-header" onclick="this.parentElement.classList.toggle(\'open\')">' +
+                    '<span class="tool-call-icon">' + info.icon + '</span>' +
+                    '<span class="tool-call-label">' + escapeHtml(info.label) + '</span>' +
+                    (summary ? '<span class="tool-call-summary">' + escapeHtml(summary) + '</span>' : '') +
+                    '<span class="tool-call-badge ' + (success ? 'success' : 'error') + '">' + (success ? 'Done' : 'Error') + '</span>' +
+                    '<span class="tool-call-chevron">▶</span>' +
                 '</div>' +
-                '<div class="tool-call-params">' + escapeHtml(paramsStr) + '</div>' +
-                (resultStr ? '<div class="tool-call-result' + statusClass + '">' + escapeHtml(resultStr.substring(0, 2000)) + '</div>' : '');
+                '<div class="tool-call-details">' +
+                    (paramText ? '<div class="tool-call-detail-section"><div class="tool-call-detail-label">Parameters</div><div class="tool-call-detail-content">' + escapeHtml(paramText) + '</div></div>' : '') +
+                    '<div class="tool-call-detail-section"><div class="tool-call-detail-label">Result</div><div class="tool-call-detail-content' + (success ? '' : ' tool-call-error-text') + '">' + escapeHtml(resultText.substring(0, 3000)) + '</div></div>' +
+                '</div>';
 
             container.appendChild(el);
             container.scrollTop = container.scrollHeight;
@@ -575,12 +708,12 @@
             return div.innerHTML;
         }
 
-        function showTyping() {
+        function showTyping(text) {
             const container = document.getElementById('chatMessages');
             const el = document.createElement('div');
             el.className = 'typing-indicator';
             el.id = 'typingIndicator';
-            el.innerHTML = '<div class="ai-loading"><div class="ai-loading-ring"></div></div><div class="typing-text">THINKING</div>';
+            el.innerHTML = '<div class="ai-loading"><div class="ai-loading-ring"></div></div><div class="typing-text">' + escapeHtml(text || 'THINKING') + '</div>';
             container.appendChild(el);
             container.scrollTop = container.scrollHeight;
         }
@@ -597,7 +730,8 @@
                 'read_tab': '/api/tool/read-tab',
                 'search_tab': '/api/tool/search-tab',
                 'run_javascript': '/api/tool/run-js',
-                'list_tabs': '/api/tabs'
+                'list_tabs': '/api/tabs',
+                'switch_tab': '/api/tool/switch-tab'
             };
 
             const endpoint = endpoints[toolName];
@@ -612,13 +746,227 @@
                     headers: { 'Content-Type': 'application/json' }
                 };
                 if (!isGet) {
-                    options.body = JSON.stringify(params);
+                    options.body = JSON.stringify(params || {});
                 }
                 const response = await fetch(endpoint, options);
                 return await response.json();
             } catch (error) {
                 return { error: 'Tool execution failed: ' + error.message };
             }
+        }
+
+        // ============================================================
+        // SSE stream reader — shared between initial and follow-up
+        // ============================================================
+        function createSSEStreamProcessor() {
+            let buffer = '';
+            let reply = '';
+            let toolCalls = [];
+
+            function processEvents(flush) {
+                const events = buffer.split(/\n\s*\n/);
+                buffer = flush ? '' : (events.pop() || '');
+                events.forEach(function (event) {
+                    event.split('\n').forEach(function (line) {
+                        line = line.trim();
+                        if (!line.startsWith('data:')) return;
+                        const payload = line.slice(5).trim();
+                        if (!payload || payload === '[DONE]') return;
+                        try {
+                            const data = JSON.parse(payload);
+                            const choice = data.choices && data.choices[0];
+                            const delta = choice && choice.delta;
+
+                            // Handle text content
+                            if (delta && delta.content) {
+                                reply += delta.content;
+                            }
+
+                            // Handle tool calls
+                            if (delta && delta.tool_calls) {
+                                delta.tool_calls.forEach(function (tc) {
+                                    if (!toolCalls[tc.index]) {
+                                        toolCalls[tc.index] = { id: tc.id || '', name: '', arguments: '' };
+                                    }
+                                    if (tc.id) toolCalls[tc.index].id = tc.id;
+                                    if (tc.function) {
+                                        if (tc.function.name) toolCalls[tc.index].name = tc.function.name;
+                                        if (tc.function.arguments) toolCalls[tc.index].arguments += tc.function.arguments;
+                                    }
+                                });
+                            }
+                        } catch (_) {}
+                    });
+                });
+            }
+
+            return {
+                getReply: function() { return reply; },
+                getToolCalls: function() { return toolCalls; },
+                processChunk: function(chunk) { processEvents(false); },
+                flush: function() { processEvents(true); },
+                getBuffer: function() { return buffer; },
+                setBuffer: function(v) { buffer = v; },
+                appendBuffer: function(v) { buffer += v; }
+            };
+        }
+
+        // ============================================================
+        // Multi-turn tool calling loop
+        // ============================================================
+        async function processWithTools(initialMessages) {
+            let currentMessages = initialMessages.slice();
+            let round = 0;
+
+            while (round < MAX_TOOL_ROUNDS) {
+                round++;
+
+                // Send request to AI
+                const requestBody = {
+                    model: selectedModel,
+                    messages: currentMessages,
+                    temperature: 0.7,
+                    max_tokens: 2048,
+                    stream: true
+                };
+                if (toolDefinitions.length > 0) {
+                    requestBody.tools = toolDefinitions;
+                    requestBody.tool_choice = 'auto';
+                }
+
+                const response = await fetch(NIM_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) {
+                    let detail = 'NVIDIA NIM request failed (' + response.status + ')';
+                    try { const errorData = await response.json(); detail = errorData.error && errorData.error.message ? errorData.error.message : detail; } catch (_) {}
+                    throw new Error(detail);
+                }
+
+                const contentType = response.headers.get('content-type') || '';
+                if (contentType.indexOf('text/event-stream') === -1) {
+                    const data = await response.json();
+                    const plainReply = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
+                    if (!plainReply) throw new Error('NVIDIA NIM returned an unexpected response.');
+                    const plainMessage = addMessage('ai', plainReply);
+                    messages.push({ role: 'assistant', content: plainReply });
+                    return;
+                }
+
+                if (!response.body) throw new Error('Streaming is unavailable in this browser.');
+
+                // Process SSE stream
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                const sse = createSSEStreamProcessor();
+                let streamBuffer = '';
+
+                // Create a placeholder message for streaming text
+                const message = addMessage('ai', '');
+                const bubble = message.querySelector('.chat-msg-bubble');
+
+                while (true) {
+                    const chunk = await reader.read();
+                    if (chunk.done) break;
+                    streamBuffer += decoder.decode(chunk.value, { stream: true }).replace(/\r/g, '');
+                    sse.setBuffer(streamBuffer);
+                    sse.processChunk();
+                    streamBuffer = sse.getBuffer();
+
+                    // Update the bubble with streamed text
+                    const currentReply = sse.getReply();
+                    if (currentReply) {
+                        bubble.textContent = currentReply;
+                        document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+                    }
+                }
+
+                // Flush remaining incomplete events
+                sse.setBuffer(streamBuffer);
+                sse.flush();
+
+                const reply = sse.getReply();
+                const toolCalls = sse.getToolCalls();
+
+                // If only tool calls (no text), that's OK — proceed to execute
+                if (!reply && toolCalls.length === 0) {
+                    message.remove();
+                    throw new Error('NVIDIA NIM returned no content.');
+                }
+
+                // No tool calls = final text reply
+                if (toolCalls.length === 0) {
+                    if (reply) {
+                        messages.push({ role: 'assistant', content: reply });
+                    } else {
+                        message.remove(); // empty bubble
+                    }
+                    return;
+                }
+
+                // Has tool calls — execute them and loop
+                if (reply) {
+                    messages.push({ role: 'assistant', content: reply });
+                }
+
+                for (const tc of toolCalls) {
+                    if (!tc.name) continue;
+
+                    let params = {};
+                    try {
+                        params = JSON.parse(tc.arguments);
+                    } catch (_) {}
+
+                    // Show reasoning and execute
+                    addReasoning('Using ' + (TOOL_LABELS[tc.name] ? TOOL_LABELS[tc.name].label : tc.name) + '...');
+                    showTyping('EXECUTING');
+
+                    const result = await executeTool(tc.name, params);
+                    removeTyping();
+
+                    addToolCall(tc.name, params, result, !result.error);
+
+                    // Add tool result to conversation for next round
+                    messages.push({
+                        role: 'assistant',
+                        content: null,
+                        tool_calls: [{
+                            id: tc.id,
+                            type: 'function',
+                            function: { name: tc.name, arguments: tc.arguments }
+                        }]
+                    });
+                    messages.push({
+                        role: 'tool',
+                        tool_call_id: tc.id,
+                        content: typeof result === 'string' ? result : JSON.stringify(result)
+                    });
+                }
+
+                // Refresh the tabs panel if it's open
+                if (document.getElementById('tabsPanel').classList.contains('open')) {
+                    refreshTabs();
+                }
+
+                // Build messages for next round (include all history)
+                currentMessages = [];
+                if (systemPrompt) {
+                    currentMessages.push({ role: 'system', content: systemPrompt });
+                }
+                currentMessages.push(...messages.slice(-40));
+
+                // Show thinking for the next round
+                if (round < MAX_TOOL_ROUNDS) {
+                    showTyping('THINKING');
+                }
+            }
+
+            // Safety: if we hit the limit, stop gracefully
+            removeTyping();
+            addMessage('ai', 'I\'ve completed the browser actions. Let me summarize what was done.');
         }
 
         async function handleSend(event) {
@@ -637,229 +985,20 @@
             messages.push({ role: 'user', content: text });
             input.value = '';
             input.style.height = 'auto';
-            showTyping();
+            showTyping('THINKING');
             const sendButton = document.querySelector('#chatForm .btn');
             sendButton.disabled = true;
 
             try {
-                // Build the message payload with system prompt
+                // Build the initial message payload
                 const apiMessages = [];
                 if (systemPrompt) {
                     apiMessages.push({ role: 'system', content: systemPrompt });
                 }
-                // Add conversation history (last 20 messages)
                 const history = messages.slice(-20);
                 apiMessages.push(...history);
 
-                const requestBody = {
-                    model: selectedModel,
-                    messages: apiMessages,
-                    temperature: 0.7,
-                    max_tokens: 2048,
-                    stream: true
-                };
-
-                // Add tool definitions if available
-                if (toolDefinitions.length > 0) {
-                    requestBody.tools = toolDefinitions;
-                    requestBody.tool_choice = 'auto';
-                }
-
-                const response = await fetch(NIM_API_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                    body: JSON.stringify(requestBody)
-                });
-                if (!response.ok) {
-                    let detail = 'NVIDIA NIM request failed (' + response.status + ')';
-                    try { const errorData = await response.json(); detail = errorData.error && errorData.error.message ? errorData.error.message : detail; } catch (_) {}
-                    throw new Error(detail);
-                }
-                const contentType = response.headers.get('content-type') || '';
-                if (contentType.indexOf('text/event-stream') === -1) {
-                    // Some NIM endpoints return a plain JSON response instead of SSE.
-                    const data = await response.json();
-                    const plainReply = (data && data.choices && data.choices[0] && data.choices[0].message && data.choices[0].message.content) || '';
-                    if (!plainReply) throw new Error('NVIDIA NIM returned an unexpected response.');
-                    const plainMessage = addMessage('ai', plainReply);
-                    messages.push({ role: 'assistant', content: plainReply });
-                    localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(messages.slice(-20)));
-                    return false;
-                }
-                if (!response.body) throw new Error('Streaming is unavailable in this browser.');
-                const reader = response.body.getReader();
-                const decoder = new TextDecoder();
-                let buffer = '';
-                let reply = '';
-                let toolCalls = [];
-                const message = addMessage('ai', '');
-                const bubble = message.querySelector('.chat-msg-bubble');
-
-                const processEvents = function (flush) {
-                    const events = buffer.split(/\n\s*\n/);
-                    buffer = flush ? '' : (events.pop() || '');
-                    events.forEach(function (event) {
-                        event.split('\n').forEach(function (line) {
-                            line = line.trim();
-                            if (!line.startsWith('data:')) return;
-                            const payload = line.slice(5).trim();
-                            if (!payload || payload === '[DONE]') return;
-                            try {
-                                const data = JSON.parse(payload);
-                                const choice = data.choices && data.choices[0];
-                                const delta = choice && choice.delta;
-
-                                // Handle text content
-                                if (delta && delta.content) {
-                                    reply += delta.content;
-                                    bubble.textContent = reply;
-                                }
-
-                                // Handle tool calls
-                                if (delta && delta.tool_calls) {
-                                    delta.tool_calls.forEach(function (tc) {
-                                        // Accumulate tool call data
-                                        if (!toolCalls[tc.index]) {
-                                            toolCalls[tc.index] = {
-                                                id: tc.id || '',
-                                                name: '',
-                                                arguments: ''
-                                            };
-                                        }
-                                        if (tc.id) toolCalls[tc.index].id = tc.id;
-                                        if (tc.function) {
-                                            if (tc.function.name) toolCalls[tc.index].name = tc.function.name;
-                                            if (tc.function.arguments) toolCalls[tc.index].arguments += tc.function.arguments;
-                                        }
-                                    });
-                                }
-
-                                document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-                            } catch (_) {}
-                        });
-                    });
-                };
-
-                while (true) {
-                    const chunk = await reader.read();
-                    if (chunk.done) break;
-                    buffer += decoder.decode(chunk.value, { stream: true }).replace(/\r/g, '');
-                    processEvents(false);
-                }
-                buffer += decoder.decode();
-                processEvents(true);
-
-                // Handle tool calls if any
-                if (toolCalls.length > 0) {
-                    // Add the assistant's text reply if any
-                    if (reply) {
-                        messages.push({ role: 'assistant', content: reply });
-                    }
-
-                    // Execute each tool call
-                    for (const tc of toolCalls) {
-                        if (!tc.name) continue;
-
-                        let params = {};
-                        try {
-                            params = JSON.parse(tc.arguments);
-                        } catch (_) {}
-
-                        // Show reasoning
-                        addReasoning('Using ' + tc.name + '...');
-
-                        // Execute the tool
-                        const result = await executeTool(tc.name, params);
-
-                        // Display the tool call
-                        addToolCall(tc.name, params, result, !result.error);
-
-                        // Add tool result to message history
-                        messages.push({
-                            role: 'assistant',
-                            content: null,
-                            tool_calls: [{
-                                id: tc.id,
-                                type: 'function',
-                                function: {
-                                    name: tc.name,
-                                    arguments: tc.arguments
-                                }
-                            }]
-                        });
-                        messages.push({
-                            role: 'tool',
-                            tool_call_id: tc.id,
-                            content: JSON.stringify(result)
-                        });
-                    }
-
-                    // Get AI's response after tool execution
-                    showTyping();
-                    const followUpMessages = [];
-                    if (systemPrompt) {
-                        followUpMessages.push({ role: 'system', content: systemPrompt });
-                    }
-                    followUpMessages.push(...messages.slice(-30));
-
-                    const followUpResponse = await fetch(NIM_API_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                        body: JSON.stringify({
-                            model: selectedModel,
-                            messages: followUpMessages,
-                            temperature: 0.7,
-                            max_tokens: 2048,
-                            stream: true
-                        })
-                    });
-
-                    if (followUpResponse.ok) {
-                        const followUpContentType = followUpResponse.headers.get('content-type') || '';
-                        if (followUpContentType.indexOf('text/event-stream') !== -1) {
-                            const followUpReader = followUpResponse.body.getReader();
-                            let followUpBuffer = '';
-                            let followUpReply = '';
-                            const followUpMessage = addMessage('ai', '');
-                            const followUpBubble = followUpMessage.querySelector('.chat-msg-bubble');
-
-                            while (true) {
-                                const chunk = await followUpReader.read();
-                                if (chunk.done) break;
-                                followUpBuffer += decoder.decode(chunk.value, { stream: true }).replace(/\r/g, '');
-                                const followUpEvents = followUpBuffer.split(/\n\s*\n/);
-                                followUpBuffer = followUpEvents.pop() || '';
-                                followUpEvents.forEach(function (event) {
-                                    event.split('\n').forEach(function (line) {
-                                        line = line.trim();
-                                        if (!line.startsWith('data:')) return;
-                                        const payload = line.slice(5).trim();
-                                        if (!payload || payload === '[DONE]') return;
-                                        try {
-                                            const data = JSON.parse(payload);
-                                            const choice = data.choices && data.choices[0];
-                                            const delta = choice && choice.delta && choice.delta.content;
-                                            if (delta) {
-                                                followUpReply += delta;
-                                                followUpBubble.textContent = followUpReply;
-                                                document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
-                                            }
-                                        } catch (_) {}
-                                    });
-                                });
-                            }
-                            if (followUpReply) {
-                                messages.push({ role: 'assistant', content: followUpReply });
-                            }
-                        }
-                    }
-                } else if (!reply) {
-                    message.remove();
-                    throw new Error('NVIDIA NIM returned no streamed content.');
-                } else {
-                    messages.push({ role: 'assistant', content: reply });
-                }
-
+                await processWithTools(apiMessages);
                 localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(messages.slice(-20)));
             } catch (error) {
                 messages.pop();
@@ -871,6 +1010,84 @@
             return false;
         }
 
+        // ============================================================
+        // Browser tabs panel
+        // ============================================================
+        let tabsPanelOpen = false;
+        let currentTabs = [];
+
+        function toggleTabsPanel() {
+            tabsPanelOpen = !tabsPanelOpen;
+            document.getElementById('tabsPanel').classList.toggle('open', tabsPanelOpen);
+            if (tabsPanelOpen) refreshTabs();
+        }
+
+        async function refreshTabs() {
+            try {
+                const response = await fetch('/api/tabs', { cache: 'no-store' });
+                if (!response.ok) return;
+                const data = await response.json();
+                currentTabs = data.tabs || [];
+                document.getElementById('tabCountLabel').textContent = currentTabs.length;
+                renderTabsList();
+            } catch (_) {}
+        }
+
+        function renderTabsList() {
+            const list = document.getElementById('tabsList');
+            const empty = document.getElementById('tabsEmpty');
+
+            if (currentTabs.length === 0) {
+                list.innerHTML = '';
+                if (empty) {
+                    empty.style.display = '';
+                    list.appendChild(empty);
+                } else {
+                    list.innerHTML = '<div class="tabs-empty">No open tabs detected.</div>';
+                }
+                return;
+            }
+
+            list.innerHTML = '';
+            currentTabs.forEach(function(tab, index) {
+                const item = document.createElement('div');
+                item.className = 'tab-item' + (tab.active ? ' active' : '');
+                item.onclick = function() { switchToTab(tab.index); };
+
+                // Get favicon letter from title or URL
+                var letter = (tab.title || tab.url || '?').charAt(0).toUpperCase();
+                // Try to get hostname for a better label
+                var hostname = '';
+                try { hostname = new URL(tab.url).hostname; } catch(_) {}
+
+                item.innerHTML =
+                    '<div class="tab-item-favicon">' + escapeHtml(letter) + '</div>' +
+                    '<div class="tab-item-info">' +
+                        '<div class="tab-item-title">' + escapeHtml(tab.title || '(untitled)') + '</div>' +
+                        '<div class="tab-item-url">' + escapeHtml(hostname || tab.url || '') + '</div>' +
+                    '</div>' +
+                    '<div class="tab-item-active-dot"></div>';
+
+                list.appendChild(item);
+            });
+        }
+
+        async function switchToTab(tabIndex) {
+            try {
+                const response = await fetch('/api/tool/switch-tab', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tab_index: tabIndex })
+                });
+                if (response.ok) {
+                    await refreshTabs();
+                }
+            } catch (_) {}
+        }
+
+        // ============================================================
+        // Init
+        // ============================================================
         function renderSavedMessages() {
             messages.forEach(function (message) {
                 if (message.role === 'user') {
@@ -885,6 +1102,11 @@
         loadTools();
         updateApiKeyStatus();
         renderSavedMessages();
+
+        // Auto-refresh tabs every 10 seconds if panel is open
+        setInterval(function() {
+            if (tabsPanelOpen) refreshTabs();
+        }, 10000);
 
         // Auto-grow the textarea as the user types.
         document.getElementById('chatInput').addEventListener('input', function () {
