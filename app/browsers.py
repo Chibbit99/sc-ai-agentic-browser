@@ -173,29 +173,51 @@ def detect_browsers() -> list[DetectedBrowser]:
     return list(found.values())
 
 
-def _is_firefox_binary(path: str) -> bool:
-    """Accept native Firefox launchers, but reject shell/package wrappers."""
+def _firefox_binary(path: str) -> str | None:
+    """Return a real Firefox binary for a distro launcher or installation.
+
+    Firefox packages may expose a shell wrapper at /usr/bin/firefox while the
+    actual ELF binary lives below /usr/lib/firefox. Selenium requires the
+    latter when setting Options.binary_location.
+    """
     candidate = Path(path)
-    if not candidate.is_file() or not os.access(candidate, os.X_OK):
-        return False
-    try:
-        result = subprocess.run(
-            [str(candidate), "--version"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            timeout=3,
-            check=False,
+    candidates = [candidate]
+    if candidate.name == "firefox":
+        candidates.extend(
+            [
+                candidate.parent / "firefox-bin",
+                Path("/usr/lib/firefox/firefox"),
+                Path("/usr/lib/firefox/firefox-bin"),
+                Path("/opt/firefox/firefox"),
+                Path.home() / ".local" / "firefox" / "firefox",
+            ]
         )
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return "firefox" in result.stdout.lower() and "mozilla" in result.stdout.lower()
+    for item in candidates:
+        if not item.is_file() or not os.access(item, os.X_OK):
+            continue
+        try:
+            result = subprocess.run(
+                [str(item), "--version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if "firefox" in result.stdout.lower() and "mozilla" in result.stdout.lower():
+            return str(item)
+    return None
 
 
 def detect_browser(browser_id: str) -> DetectedBrowser | None:
     for browser in detect_browsers():
         if browser.id == browser_id:
-            if browser.driver_kind == "firefox" and not _is_firefox_binary(browser.path):
+            if browser.driver_kind == "firefox":
+                binary = _firefox_binary(browser.path)
+                if binary:
+                    return DetectedBrowser(browser.spec, binary, browser.kind)
                 continue
             return browser
     return None
