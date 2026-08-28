@@ -129,6 +129,49 @@ def _flatpak_bin_dirs() -> list[Path]:
     return [d for d in dirs if d.is_dir()]
 
 
+def _snap_firefox_binary() -> Path | None:
+    """Find the real Firefox binary behind the current Snap revision."""
+    snap_root = Path("/snap/firefox")
+    mounts = [snap_root / "current"]
+    if snap_root.is_dir():
+        mounts.extend(p for p in snap_root.iterdir() if p.is_dir() and p.name.isdigit())
+    for mount in mounts:
+        for relative in (Path("usr/lib/firefox/firefox"), Path("usr/lib/firefox/firefox-bin")):
+            candidate = mount / relative
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
+def _firefox_binary(path: str) -> str | None:
+    """Return a real Firefox executable, never a package wrapper."""
+    candidates: list[Path] = []
+    candidate = Path(path)
+    if candidate.is_file() and os.access(candidate, os.X_OK):
+        try:
+            header = candidate.read_bytes()[:4]
+            if header == b"\\x7fELF":
+                candidates.append(candidate)
+        except OSError:
+            pass
+    snap_binary = _snap_firefox_binary()
+    if snap_binary:
+        candidates.append(snap_binary)
+    for root in (Path("/usr/lib/firefox"), Path("/usr/lib/firefox-esr"), Path("/opt/firefox"), Path.home() / ".local/firefox"):
+        candidates.extend(root / name for name in ("firefox", "firefox-bin"))
+    for item in candidates:
+        try:
+            item = item.resolve()
+            if item.read_bytes()[:4] != b"\\x7fELF" or not os.access(item, os.X_OK):
+                continue
+            result = subprocess.run([str(item), "--version"], capture_output=True, text=True, timeout=5, check=False)
+            if result.returncode == 0 and "firefox" in result.stdout.lower():
+                return str(item)
+        except (OSError, subprocess.SubprocessError):
+            continue
+    return None
+
+
 def detect_browsers() -> list[DetectedBrowser]:
     """Return every installed supported browser (one entry per id)."""
     found: dict[str, DetectedBrowser] = {}
@@ -138,6 +181,16 @@ def detect_browsers() -> list[DetectedBrowser]:
             found[browser.id] = browser
 
     for spec in BROWSER_SPECS:
+        # Firefox's /usr/bin/firefox is frequently a Snap wrapper. Resolve it
+        # before recording the result so the launcher never persists the
+        # wrapper path when the real Snap binary is available.
+        if spec.id == "firefox":
+            path = shutil.which("firefox")
+            if path:
+                resolved = _firefox_binary(path)
+                if resolved:
+                    add(DetectedBrowser(spec, resolved, "snap" if str(resolved).startswith("/snap/") else "native"))
+                    continue
         # 1) Native executables on PATH.
         for name in spec.executables:
             path = shutil.which(name)
