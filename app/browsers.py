@@ -62,7 +62,7 @@ def _snap_firefox_binary() -> Path | None:
     if snap_command:
         try:
             result = subprocess.run(
-                [snap_command, "run", "--shell", "firefox", "-c", "printf %s \\\"$SNAP\\\""],
+                [snap_command, "run", "--shell", "firefox", "-c", "printf '%s' \"$SNAP\""],
                 capture_output=True, text=True, timeout=5, check=False,
             )
             snap_mount = result.stdout.strip()
