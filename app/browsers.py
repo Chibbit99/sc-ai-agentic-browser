@@ -56,12 +56,33 @@ def _flatpak_bin_dirs():
 
 
 def _snap_firefox_binary() -> Path | None:
-    """Find the real binary in the currently installed Snap revision."""
+    """Find Firefox's real binary through the installed Snap metadata."""
+    mounts: list[Path] = []
+    snap_command = shutil.which("snap")
+    if snap_command:
+        try:
+            result = subprocess.run(
+                [snap_command, "run", "--shell", "firefox", "-c", "printf %s \\\"$SNAP\\\""],
+                capture_output=True, text=True, timeout=5, check=False,
+            )
+            snap_mount = result.stdout.strip()
+            if snap_mount:
+                mounts.append(Path(snap_mount))
+        except (OSError, subprocess.SubprocessError):
+            pass
     root = Path("/snap/firefox")
-    mounts = [root / "current"]
     if root.is_dir():
+        mounts.append(root / "current")
         mounts.extend(p for p in root.iterdir() if p.is_dir() and p.name.isdigit())
+    seen: set[str] = set()
     for mount in mounts:
+        try:
+            key = str(mount.resolve())
+        except OSError:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
         for relative in ("usr/lib/firefox/firefox", "usr/lib/firefox/firefox-bin"):
             candidate = mount / relative
             if _is_firefox_binary(candidate):
