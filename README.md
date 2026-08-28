@@ -12,6 +12,73 @@ installed and lets you pick one.
 
 ---
 
+## Installation
+
+Run these commands in order. The launcher must **not** be started from the
+source tree before the build finishes; that is the development launcher, not
+the installed desktop application.
+
+```bash
+git clone https://github.com/Chibbit99/sc-ai-agentic-browser sc-ai
+cd sc-ai
+
+# Build environment
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# Optional: inspect detected browsers only; this does not launch SC.AI
+.venv/bin/python launcher/launcher.py --list
+
+# Build both packaged executables completely, then install them
+bash build.sh && bash install.sh
+
+# Launch the installed application
+"$HOME/.local/bin/sc-ai-launcher"
+```
+
+After installation, SC.AI is also available from the KDE application menu.
+You may pin that menu entry to the taskbar. Do not run the source launcher
+before `bash build.sh` completes.
+
+The installed application does not need the repository, Python source files,
+or `.venv`. However, keep the source checkout and virtualenv if you want to
+rebuild SC.AI, update the frontend, change Selenium behavior, or uninstall
+using the repository script. The safe cleanup option is to remove only the
+build environment after installation:
+
+```bash
+rm -rf .venv
+```
+
+Or have the build remove `.venv` after packaging while preserving the source
+checkout:
+
+```bash
+SCAI_CLEAN_BUILD_ENV=1 bash build.sh
+bash install.sh
+```
+
+Do **not** remove `app/`, `launcher/`, `installer/`, or the repository until
+you are certain you will not rebuild or use the repository's uninstall script.
+Your installed binaries and profiles remain under `~/.local` and
+`~/.config/sc-ai` respectively.
+
+To remove the repository and its build environment after installation, use:
+
+```bash
+cd ..
+rm -rf sc-ai
+```
+
+This does not uninstall the already-installed application. Use the repository
+uninstaller first if desired:
+
+```bash
+bash ~/sc-ai/uninstall.sh
+```
+
+---
+
 ## Architecture
 
 ```text
@@ -34,7 +101,7 @@ SC.AI Launcher (sc-ai-launcher, tkinter GUI)
 sc-ai/
 ├── launcher/
 │   ├── launcher.py        # Desktop GUI: pick browser → launch runtime
-│   └── icon.png           # Generated app icon
+│   └── icon.png           # Your supplied custom PNG icon
 ├── app/
 │   ├── __init__.py
 │   ├── scai_common.py     # Shared: paths, config, lock, logging

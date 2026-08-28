@@ -409,7 +409,14 @@ def main(argv=None) -> int:
         logger.info("interrupted")
     except Exception as error:
         logger.exception("runtime error")
-        common.write_state({"status": "error", "message": str(error)})
+        detail = str(error)
+        if spec.driver_kind == "firefox" and "not a Firefox executable" in detail:
+            detail = (
+                f"The selected Firefox path is not a Firefox executable: {browser_path}. "
+                "Install Firefox from your distribution, or choose the native Firefox "
+                "executable rather than a package-manager wrapper."
+            )
+        common.write_state({"status": "error", "message": detail})
         return 1
     finally:
         if driver is not None:
