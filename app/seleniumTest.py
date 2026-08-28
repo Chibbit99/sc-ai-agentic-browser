@@ -237,15 +237,10 @@ def _create_firefox(browser_path: str, profile_path: Path):
     options = FirefoxOptions()
     if browser_path:
         options.binary_location = browser_path
-    # Selenium's FirefoxProfile handling can copy or inject preferences into
-    # the profile. Passing the profile as the native command-line argument
-    # keeps the dedicated profile persistent, but avoid loading stale lock or
-    # incompatible startup preferences from an interrupted session.
-    options.add_argument("-profile")
-    options.add_argument(str(profile_path))
-    # Do not inject preferences into an existing Firefox profile. Snap Firefox
-    # can reject a session when geckodriver receives a generated preferences
-    # payload that conflicts with the profile's own files.
+    # Selenium's profile argument can cause Snap Firefox/geckodriver to merge
+    # preferences twice. Set the profile through FirefoxOptions instead; this
+    # keeps the profile persistent while producing one clean profile payload.
+    options.profile = str(profile_path)
     return webdriver.Firefox(options=options)
 
 
@@ -375,6 +370,17 @@ def main(argv=None) -> int:
     common.ensure_private_dir(profile_path)
     if spec.driver_kind == "firefox":
         _clear_firefox_stale_locks(profile_path)
+        # Firefox's profile directory is persistent, but Selenium/geckodriver
+        # expects a writable profile with a profile marker before startup.
+        # Creating it here avoids preference initialization failures on a
+        # newly-created or partially-created Snap profile.
+        prefs = profile_path / "user.js"
+        if not prefs.exists():
+            try:
+                prefs.write_text("// SC.AI persistent Firefox profile\\n", encoding="utf-8")
+                prefs.chmod(0o600)
+            except OSError as error:
+                logger.warning("could not initialize Firefox profile: %s", error)
 
     # --- Local HTTP server on a random free port ---------------------------
     try:
