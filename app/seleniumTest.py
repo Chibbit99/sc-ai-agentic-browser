@@ -237,13 +237,15 @@ def _create_firefox(browser_path: str, profile_path: Path):
     options = FirefoxOptions()
     if browser_path:
         options.binary_location = browser_path
-    # Use the persistent SC.AI profile IN PLACE. We deliberately avoid
-    # webdriver.FirefoxProfile: it copies the profile to a temporary
-    # directory that Selenium deletes on quit, which would wipe every login
-    # session. Passing -profile keeps Firefox working directly on the SC.AI
-    # profile directory.
+    # Selenium's FirefoxProfile handling can copy or inject preferences into
+    # the profile. Passing the profile as the native command-line argument
+    # keeps the dedicated profile persistent, but avoid loading stale lock or
+    # incompatible startup preferences from an interrupted session.
     options.add_argument("-profile")
     options.add_argument(str(profile_path))
+    options.set_preference("browser.shell.checkDefaultBrowser", False)
+    options.set_preference("browser.startup.page", 1)
+    options.set_preference("browser.startup.homepage", "about:blank")
     return webdriver.Firefox(options=options)
 
 
@@ -264,7 +266,7 @@ def _clear_firefox_stale_locks(profile_path: Path) -> None:
     Safe because the SC.AI single-instance lock guarantees no other process
     is using this profile right now.
     """
-    for name in ("lock", ".parentlock"):
+    for name in ("lock", ".parentlock", "parent.lock"):
         try:
             (profile_path / name).unlink(missing_ok=True)
         except OSError:
