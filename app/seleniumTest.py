@@ -428,8 +428,8 @@ def main(argv=None) -> int:
             detail = (
                 f"The selected Firefox path is not a Firefox executable: {browser_path}. "
                 "Install Firefox from your distribution, or ensure the installed Snap "
-                "contains its real Firefox binary. Launching a package-manager wrapper "
-                "directly is not supported."
+                "contains its real Firefox binary. The package-manager wrapper itself "
+                "cannot be passed to Selenium."
             )
         common.write_state({"status": "error", "message": detail})
         return 1
