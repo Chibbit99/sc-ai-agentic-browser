@@ -46,6 +46,7 @@ import logging
 import os
 import re
 import sys
+from html.parser import HTMLParser
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -279,6 +280,66 @@ TOOL_DEFINITIONS = [
         }
     }
 ]
+
+
+class _CleanHTMLParser(HTMLParser):
+    """Remove scripts/styles and all inline style/event attributes."""
+
+    _blocked = {"script", "style", "noscript", "template", "svg"}
+    _events = re.compile(r"^on", re.IGNORECASE)
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+        self.depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        tag = tag.lower()
+        if tag in self._blocked:
+            self.depth += 1
+            return
+        if self.depth:
+            return
+        clean_attrs = []
+        for name, value in attrs:
+            if name.lower() == "style" or self._events.match(name):
+                continue
+            clean_attrs.append((name, value))
+        attr_text = "".join(
+            " " + name + (f'="{str(value).replace(chr(34), "&quot;")}"' if value is not None else "")
+            for name, value in clean_attrs
+        )
+        self.parts.append(f"<{tag}{attr_text}>")
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if not self.depth and tag.lower() not in self._blocked:
+            self.parts[-1] = self.parts[-1][:-1] + " />"
+
+    def handle_endtag(self, tag):
+        tag = tag.lower()
+        if tag in self._blocked:
+            self.depth = max(0, self.depth - 1)
+            return
+        if not self.depth:
+            self.parts.append(f"</{tag}>")
+
+    def handle_data(self, data):
+        if not self.depth:
+            self.parts.append(data)
+
+    def handle_comment(self, _data):
+        pass
+
+
+def _clean_html(source):
+    parser = _CleanHTMLParser()
+    try:
+        parser.feed(source)
+        parser.close()
+        return "".join(parser.parts)
+    except Exception:
+        return re.sub(r"<script\\b[^>]*>[\\s\\S]*?</script\\s*>|<style\\b[^>]*>[\\s\\S]*?</style\\s*>", "", source, flags=re.IGNORECASE)
 
 
 def _active_tab_handle(driver):
@@ -638,7 +699,7 @@ class AppHandler(BaseHTTPRequestHandler):
             with _DRIVER_LOCK:
                 _resolve_tab(driver, payload.get("tab_index", -1))
                 if fmt == "html":
-                    content = driver.page_source
+                    content = _clean_html(driver.page_source)
                 else:
                     content = driver.execute_script("return document.body.innerText;") or ""
                     if not content.strip():
