@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -172,8 +173,29 @@ def detect_browsers() -> list[DetectedBrowser]:
     return list(found.values())
 
 
+def _is_firefox_binary(path: str) -> bool:
+    """Accept native Firefox launchers, but reject shell/package wrappers."""
+    candidate = Path(path)
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        return False
+    try:
+        result = subprocess.run(
+            [str(candidate), "--version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=3,
+            check=False,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return "firefox" in result.stdout.lower() and "mozilla" in result.stdout.lower()
+
+
 def detect_browser(browser_id: str) -> DetectedBrowser | None:
     for browser in detect_browsers():
         if browser.id == browser_id:
+            if browser.driver_kind == "firefox" and not _is_firefox_binary(browser.path):
+                continue
             return browser
     return None

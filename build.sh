@@ -74,6 +74,13 @@ rm -rf build/dist/*
 
 cp launcher/icon.png build/dist/sc-ai-icon.png
 
+# Optional cleanup is explicit because deleting the checkout can remove the
+# only copy of the uninstaller and future build inputs.
+if [ "${SCAI_CLEAN_BUILD_ENV:-0}" = "1" ]; then
+    rm -rf "$VENV"
+    echo "Removed build virtualenv (.venv); source files were preserved."
+fi
+
 # Fail the build if any artifact is absent or not a regular file.
 for artifact in build/dist/sc-ai-launcher build/dist/sc-ai-runtime build/dist/sc-ai-icon.png; do
     if [ ! -f "$artifact" ]; then
