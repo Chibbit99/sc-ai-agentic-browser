@@ -70,6 +70,7 @@ rm -rf build/dist/*
     --distpath build/dist --workpath build/work --specpath build \
     --runtime-tmpdir "$RUNTIME_TMP" \
     --add-data "$ROOT/launcher/icon.png:." \
+    --add-data "$ROOT/uninstall.sh:." \
     launcher/launcher.py
 
 cp launcher/icon.png build/dist/sc-ai-icon.png

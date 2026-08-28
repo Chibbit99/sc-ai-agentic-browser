@@ -15,6 +15,7 @@ so the launcher still works over SSH or on minimal systems.
 """
 
 import argparse
+import os
 import subprocess
 import sys
 import time
@@ -175,15 +176,18 @@ def run_gui(detected: list[browsers.DetectedBrowser]) -> int:
 
     # Header.
     header = tk.Frame(root, bg=BG)
-    header.pack(fill="x", padx=28, pady=(26, 2))
-    tk.Label(header, text="SC.AI", font=("Sans", 26, "bold"), fg=ACCENT, bg=BG).pack(anchor="w")
-    tk.Label(header, text="Choose your browser", font=("Sans", 12), fg=MUTED, bg=BG).pack(
+    header.pack(fill="x", padx=28, pady=(26, 8))
+    tk.Label(header, text="SC.AI", font=("Sans", 28, "bold"), fg=ACCENT, bg=BG).pack(anchor="w")
+    tk.Label(header, text="Your private AI browser workspace", font=("Sans", 11), fg=MUTED, bg=BG).pack(
         anchor="w", pady=(2, 0)
     )
 
     # Browser list card.
     card = tk.Frame(root, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
-    card.pack(fill="x", padx=26, pady=18)
+    card.pack(fill="x", padx=26, pady=(8, 12))
+    tk.Label(card, text="BROWSER", bg=CARD, fg=MUTED, font=("Sans", 9, "bold")).pack(
+        anchor="w", padx=16, pady=(14, 4)
+    )
 
     saved_id = (common.read_config().get("selectedBrowser") or {}).get("id", "")
     initial = saved_id if any(b.id == saved_id for b in detected) else detected[0].id
@@ -218,6 +222,37 @@ def run_gui(detected: list[browsers.DetectedBrowser]) -> int:
         for widget in (row, radio, path_label):
             widget.bind("<Button-1>", lambda _e, r=radio: r.select())
 
+    # Settings card.
+    settings = tk.Frame(root, bg=CARD, highlightbackground=BORDER, highlightthickness=1)
+    settings.pack(fill="x", padx=26, pady=(0, 12))
+    settings_header = tk.Frame(settings, bg=CARD)
+    settings_header.pack(fill="x", padx=16, pady=(12, 4))
+    tk.Label(settings_header, text="NVIDIA NIM", bg=CARD, fg=TEXT, font=("Sans", 11, "bold")).pack(side="left")
+    key_status = tk.Label(settings_header, bg=CARD, fg=ACCENT, font=("Sans", 9))
+    key_status.pack(side="right")
+    key_row = tk.Frame(settings, bg=CARD)
+    key_row.pack(fill="x", padx=16, pady=(0, 12))
+    key_var = tk.StringVar(value=str(common.read_config().get("apiKey", "")))
+    key_entry = tk.Entry(key_row, textvariable=key_var, show="•", relief="flat", bd=0,
+                         bg="#f1eee6", fg=TEXT, insertbackground=TEXT, font=("Sans", 10))
+    key_entry.pack(side="left", fill="x", expand=True, ipady=7)
+
+    def refresh_key_status():
+        key_status.config(text="Key saved" if common.read_config().get("apiKey") else "Not configured")
+
+    def save_nim_key():
+        config = common.read_config()
+        value = key_var.get().strip()
+        if value:
+            config["apiKey"] = value
+        else:
+            config.pop("apiKey", None)
+        common.write_config(config)
+        refresh_key_status()
+
+    ttk.Button(key_row, text="Save", command=save_nim_key).pack(side="left", padx=(8, 0))
+    refresh_key_status()
+
     # Footer.
     footer = tk.Frame(root, bg=BG)
     footer.pack(fill="x", padx=26, pady=(0, 26))
@@ -233,6 +268,24 @@ def run_gui(detected: list[browsers.DetectedBrowser]) -> int:
     launch_btn.pack(side="right")
 
     result = {"code": 0}
+    if not common.is_frozen():
+        uninstall_path = Path(__file__).resolve().parent.parent / "uninstall.sh"
+    else:
+        uninstall_path = Path(getattr(sys, "_MEIPASS", ".")) / "uninstall.sh"
+
+    def confirm_uninstall():
+        from tkinter import messagebox
+        if not messagebox.askyesno("Uninstall SC.AI", "Remove SC.AI from the application menu and delete its installed files?\\n\\nYour browser profiles and API key will be kept.", parent=root):
+            return
+        try:
+            if common.is_frozen() and not uninstall_path.is_file():
+                raise FileNotFoundError("The uninstaller is not installed")
+            subprocess.Popen(["bash", str(uninstall_path)], stdin=subprocess.DEVNULL,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                             start_new_session=True)
+            root.destroy()
+        except OSError as error:
+            messagebox.showerror("Uninstall failed", str(error), parent=root)
 
     def on_launch():
         chosen = next((b for b in detected if b.id == selected.get()), None)
@@ -270,6 +323,8 @@ def run_gui(detected: list[browsers.DetectedBrowser]) -> int:
             result["code"] = 1
 
     launch_btn.config(command=on_launch)
+    uninstall_btn = ttk.Button(footer, text="Uninstall", command=confirm_uninstall)
+    uninstall_btn.pack(side="right", padx=(0, 8))
 
     # Size + center on screen.
     root.update_idletasks()
@@ -326,6 +381,8 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="sc-ai-launcher", description="SC.AI launcher")
     parser.add_argument("--list", action="store_true", help="print detected browsers and exit")
     parser.add_argument("--console", action="store_true", help="use the console picker instead of the GUI")
+    parser.add_argument("--settings", action="store_true", help="open launcher settings")
+    parser.add_argument("--uninstall", action="store_true", help="open the uninstall confirmation")
     args = parser.parse_args(argv)
 
     # If a runtime is already running, do not start a second one: two
@@ -342,6 +399,10 @@ def main(argv=None) -> int:
 
     detected = browsers.detect_browsers()
     logger.info("detected browsers: %s", [(b.id, b.path) for b in detected])
+
+    if args.uninstall and not _gui_available():
+        print("Run the graphical launcher to confirm uninstall.")
+        return 1
 
     if args.list:
         for browser in detected:

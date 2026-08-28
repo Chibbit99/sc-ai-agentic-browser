@@ -14,10 +14,18 @@ GenericName=AI Chat
 Comment=SC.AI Agentic Browser — AI chat with a dedicated browser profile
 Exec=@EXEC@
 Icon=@ICON@
+Actions=configure;uninstall;
 Terminal=false
 Categories=Network;Utility;
 Keywords=AI;chat;browser;NVIDIA;selenium
 StartupNotify=true
 StartupWMClass=sc-ai
-X-KDE-StartupNotify=true
-X-GNOME-UsesNotifications=true
+X-KDE-StartupNotify=trueX-GNOME-UsesNotifications=true
+
+[Desktop Action configure]
+Name=Configure NVIDIA NIM key
+Exec=@EXEC@ --settings
+
+[Desktop Action uninstall]
+Name=Uninstall SC.AI
+Exec=@EXEC@ --uninstall
