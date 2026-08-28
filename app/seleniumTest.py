@@ -282,12 +282,14 @@ def resolve_browser(args) -> tuple[str | None, str | None]:
             browser_path = browser_path or saved.get("path")
     if not browser_id:
         return None, None
-    if not browser_path or not os.path.isfile(browser_path):
-        detected = browsers.detect_browser(browser_id)
-        if detected:
-            browser_path = detected.path
-        else:
-            browser_path = None
+    # Always re-resolve the selected browser at runtime. This handles
+    # distro launcher scripts and Firefox installations whose real binary is
+    # not the path originally saved in config.json.
+    detected = browsers.detect_browser(browser_id)
+    if detected:
+        browser_path = detected.path
+    elif not browser_path or not os.path.isfile(browser_path):
+        browser_path = None
     return browser_id, browser_path
 
 
