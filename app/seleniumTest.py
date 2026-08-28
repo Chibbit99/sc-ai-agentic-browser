@@ -30,11 +30,13 @@ Agentic capabilities
 --------------------
 The runtime exposes browser automation tools that allow the AI to control
 the browser via HTTP endpoints:
-- GET  /api/tabs           List all open tabs
-- POST /api/tool/open-tab  Open a new tab with a URL
-- POST /api/tool/read-tab  Read the text/HTML content of a tab
+- GET  /api/tabs            List all open tabs
+- POST /api/tool/open-tab   Open a new tab with a URL
+- POST /api/tool/read-tab   Read the text/HTML content of a tab
 - POST /api/tool/search-tab Search for a string in a tab
-- POST /api/tool/run-js    Run JavaScript on a tab
+- POST /api/tool/run-js     Run JavaScript on a tab
+- POST /api/tool/click-element  Click an element on a page
+- POST /api/tool/type-text      Type text into an input on a page
 """
 
 import argparse
@@ -90,11 +92,13 @@ RULES:
 
 TOOLS:
 - open_tab: Open a URL in a new tab. Always pass a full URL.
-- read_tab: Read the page content. Pass tab_index (0-based) to target a specific tab, or omit for the active tab. Returns page text.
+- read_tab: Read the page content. Pass tab_index (0-based) to target a specific tab, or omit it to read the tab the user is currently viewing. Returns page text.
 - search_tab: Search page text for a string. Pass query and optionally tab_index.
 - run_javascript: Execute JS on a page and return the result. Pass code and optionally tab_index.
 - list_tabs: List all open tabs with titles and URLs.
 - switch_tab: Switch to a specific tab by index.
+- click_element: Click an element on the page. Pass selector (CSS selector, or XPath starting with //) and optionally index for the nth match.
+- type_text: Type text into an input, textarea, or contenteditable on the page. Pass selector and text; pass clear=false to append instead of replacing existing content.
 """
 
 # Tool definitions for NVIDIA NIM function calling
@@ -210,8 +214,139 @@ TOOL_DEFINITIONS = [
                 "required": ["tab_index"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "click_element",
+            "description": "Click an element on the page (link, button, checkbox...) using a CSS selector",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector for the element (or XPath starting with //)"
+                    },
+                    "index": {
+                        "type": "integer",
+                        "description": "Which matching element to click if the selector matches several (0-based)",
+                        "default": 0
+                    },
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "Index of the tab to act on (0-based). Defaults to the tab the user is viewing.",
+                        "default": -1
+                    }
+                },
+                "required": ["selector"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "type_text",
+            "description": "Type text into an input field, textarea, or contenteditable element",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "selector": {
+                        "type": "string",
+                        "description": "CSS selector for the field (or XPath starting with //)"
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The text to type"
+                    },
+                    "clear": {
+                        "type": "boolean",
+                        "description": "Clear existing content first (default true)",
+                        "default": True
+                    },
+                    "index": {
+                        "type": "integer",
+                        "description": "Which matching element to use if the selector matches several (0-based)",
+                        "default": 0
+                    },
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "Index of the tab to act on (0-based). Defaults to the tab the user is viewing.",
+                        "default": -1
+                    }
+                },
+                "required": ["selector", "text"]
+            }
+        }
     }
 ]
+
+
+def _active_tab_handle(driver):
+    """Return the handle of the tab the user is actually viewing.
+
+    Selenium's current_window_handle becomes stale when the user clicks a
+    different tab in the browser chrome, so detect the visible document
+    instead. Falls back to the first live window.
+    """
+    handles = driver.window_handles
+    if not handles:
+        return None
+    if len(handles) == 1:
+        return handles[0]
+    fallback = None
+    for handle in handles:
+        try:
+            driver.switch_to.window(handle)
+            if fallback is None:
+                fallback = handle
+            if driver.execute_script("return document.visibilityState") == "visible":
+                return handle
+        except Exception:
+            continue
+    return fallback
+
+
+def _resolve_tab(driver, tab_index):
+    """Switch the driver to the requested tab index, or the user's active tab."""
+    handles = driver.window_handles
+    if (
+        tab_index is not None
+        and isinstance(tab_index, int)
+        and 0 <= tab_index < len(handles)
+    ):
+        driver.switch_to.window(handles[tab_index])
+        return handles[tab_index]
+    handle = _active_tab_handle(driver)
+    if handle is not None:
+        driver.switch_to.window(handle)
+    return handle
+
+
+def _find_element(driver, selector, index=0):
+    """Find an element by CSS selector (or XPath when it starts with //)."""
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+
+    by = By.XPATH if selector.startswith("//") or selector.startswith("(") else By.CSS_SELECTOR
+    try:
+        elements = WebDriverWait(driver, 10).until(
+            lambda d: d.find_elements(by, selector)
+        )
+    except Exception as error:
+        raise RuntimeError(f"No element found for selector '{selector}'") from error
+    if not elements:
+        raise RuntimeError(f"No element found for selector '{selector}'")
+    if index >= len(elements):
+        raise RuntimeError(
+            f"Selector '{selector}' matched {len(elements)} element(s) "
+            f"but index {index} was requested"
+        )
+    element = elements[index]
+    try:
+        driver.execute_script("arguments[0].scrollIntoView({block: 'center'});", element)
+    except Exception:
+        pass
+    return element
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -273,6 +408,12 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/tool/switch-tab":
             self.handle_switch_tab()
+            return
+        if route == "/api/tool/click-element":
+            self.handle_click_element()
+            return
+        if route == "/api/tool/type-text":
+            self.handle_type_text()
             return
         self.send_error(404)
 
@@ -386,8 +527,8 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         try:
             with _DRIVER_LOCK:
+                active_handle = _active_tab_handle(driver)
                 tabs = []
-                current = driver.current_window_handle
                 for i, handle in enumerate(driver.window_handles):
                     try:
                         driver.switch_to.window(handle)
@@ -401,9 +542,13 @@ class AppHandler(BaseHTTPRequestHandler):
                         "handle": handle,
                         "url": url,
                         "title": title,
-                        "active": handle == current
+                        "active": handle == active_handle
                     })
-                driver.switch_to.window(current)
+                if active_handle:
+                    try:
+                        driver.switch_to.window(active_handle)
+                    except Exception:
+                        pass
             self.send_json({"tabs": tabs})
         except Exception as error:
             logger.exception("list_tabs error")
@@ -419,11 +564,10 @@ class AppHandler(BaseHTTPRequestHandler):
             payload = json.loads(self.read_body() or b"{}")
             tab_index = payload.get("tab_index", -1)
             with _DRIVER_LOCK:
-                handles = driver.window_handles
-                if tab_index < 0 or tab_index >= len(handles):
-                    self.send_json({"error": f"Invalid tab index {tab_index}"}, 400)
+                handle = _resolve_tab(driver, tab_index)
+                if handle is None:
+                    self.send_json({"error": "No tabs are open"}, 400)
                     return
-                driver.switch_to.window(handles[tab_index])
                 self.send_json({
                     "success": True,
                     "url": driver.current_url,
@@ -448,13 +592,25 @@ class AppHandler(BaseHTTPRequestHandler):
             if not url.startswith(("http://", "https://", "file://")):
                 url = "https://" + url
             with _DRIVER_LOCK:
-                driver.execute_script(f"window.open('{url}', '_blank');")
-                time.sleep(0.5)
-                handles = driver.window_handles
-                driver.switch_to.window(handles[-1])
+                before = set(driver.window_handles)
+                driver.execute_script("window.open(arguments[0], '_blank');", url)
+                # Wait for the new tab to appear, then switch to it.
+                new_handle = None
+                deadline = time.time() + 10
+                while time.time() < deadline:
+                    for handle in driver.window_handles:
+                        if handle not in before:
+                            new_handle = handle
+                            break
+                    if new_handle:
+                        break
+                    time.sleep(0.1)
+                if new_handle:
+                    driver.switch_to.window(new_handle)
+                else:
+                    driver.switch_to.window(driver.window_handles[-1])
                 try:
                     from selenium.webdriver.support.ui import WebDriverWait
-                    from selenium.webdriver.support import expected_conditions as EC
                     WebDriverWait(driver, 10).until(
                         lambda d: d.execute_script('return document.readyState') in ('complete', 'interactive')
                     )
@@ -478,16 +634,16 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.read_body() or b"{}")
-            tab_index = payload.get("tab_index", -1)
             fmt = payload.get("format", "text")
             with _DRIVER_LOCK:
-                handles = driver.window_handles
-                if tab_index >= 0 and tab_index < len(handles):
-                    driver.switch_to.window(handles[tab_index])
+                _resolve_tab(driver, payload.get("tab_index", -1))
                 if fmt == "html":
                     content = driver.page_source
                 else:
-                    content = driver.execute_script("return document.body.innerText;")
+                    content = driver.execute_script("return document.body.innerText;") or ""
+                    if not content.strip():
+                        time.sleep(1.0)
+                        content = driver.execute_script("return document.body.innerText;") or ""
                 title = driver.title
                 url = driver.current_url
             truncated = content[:30000]
@@ -514,15 +670,15 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.read_body() or b"{}")
             query = payload.get("query", "").strip()
-            tab_index = payload.get("tab_index", -1)
             if not query:
                 self.send_json({"error": "query is required"}, 400)
                 return
             with _DRIVER_LOCK:
-                handles = driver.window_handles
-                if tab_index >= 0 and tab_index < len(handles):
-                    driver.switch_to.window(handles[tab_index])
-                text = driver.execute_script("return document.body.innerText;")
+                _resolve_tab(driver, payload.get("tab_index", -1))
+                text = driver.execute_script("return document.body.innerText;") or ""
+                if not text.strip():
+                    time.sleep(1.0)
+                    text = driver.execute_script("return document.body.innerText;") or ""
                 title = driver.title
                 url = driver.current_url
             matches = []
@@ -566,14 +722,11 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.read_body() or b"{}")
             code = payload.get("code", "").strip()
-            tab_index = payload.get("tab_index", -1)
             if not code:
                 self.send_json({"error": "code is required"}, 400)
                 return
             with _DRIVER_LOCK:
-                handles = driver.window_handles
-                if tab_index >= 0 and tab_index < len(handles):
-                    driver.switch_to.window(handles[tab_index])
+                _resolve_tab(driver, payload.get("tab_index", -1))
                 result = driver.execute_script(code)
                 title = driver.title
                 url = driver.current_url
@@ -593,6 +746,76 @@ class AppHandler(BaseHTTPRequestHandler):
             })
         except Exception as error:
             logger.exception("run_js error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_click_element(self):
+        """Click an element on the current page."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            selector = (payload.get("selector") or "").strip()
+            index = int(payload.get("index", 0) or 0)
+            if not selector:
+                self.send_json({"error": "selector is required"}, 400)
+                return
+            with _DRIVER_LOCK:
+                _resolve_tab(driver, payload.get("tab_index", -1))
+                element = _find_element(driver, selector, index)
+                try:
+                    element.click()
+                except Exception:
+                    driver.execute_script("arguments[0].click();", element)
+                title = driver.title
+                url = driver.current_url
+            self.send_json({
+                "result": f"Clicked '{selector}' on {title} ({url})",
+                "success": True,
+                "url": url,
+                "title": title
+            })
+        except Exception as error:
+            logger.exception("click_element error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_type_text(self):
+        """Type text into an input on the current page."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            selector = (payload.get("selector") or "").strip()
+            text = payload.get("text", "")
+            clear = bool(payload.get("clear", True))
+            index = int(payload.get("index", 0) or 0)
+            if not selector:
+                self.send_json({"error": "selector is required"}, 400)
+                return
+            if not isinstance(text, str):
+                text = str(text)
+            with _DRIVER_LOCK:
+                _resolve_tab(driver, payload.get("tab_index", -1))
+                element = _find_element(driver, selector, index)
+                if clear:
+                    try:
+                        element.clear()
+                    except Exception:
+                        pass
+                element.send_keys(text)
+                title = driver.title
+                url = driver.current_url
+            self.send_json({
+                "result": f"Typed {len(text)} character(s) into '{selector}' on {title}",
+                "success": True,
+                "url": url,
+                "title": title
+            })
+        except Exception as error:
+            logger.exception("type_text error")
             self.send_json({"error": str(error)}, 500)
 
     def log_message(self, *_args):
@@ -800,14 +1023,29 @@ def main(argv=None) -> int:
         )
         logger.info("SC.AI opened in %s with agentic capabilities", spec.name)
         # Stay alive until the user closes the browser window. Polling the
-        # URL is the standard way to notice that the window went away.
+        # URL is the standard way to notice that the window went away, but
+        # the handle can go stale when the user closes or switches tabs, so
+        # recover instead of quitting unless every window is gone.
         while True:
             try:
                 _ = driver.current_url
                 time.sleep(0.5)
             except WebDriverException:
-                logger.info("browser window closed by the user")
-                break
+                try:
+                    if not driver.window_handles:
+                        logger.info("browser window closed by the user")
+                        break
+                    with _DRIVER_LOCK:
+                        handle = _active_tab_handle(driver)
+                        if handle is None:
+                            logger.info("browser window closed by the user")
+                            break
+                        driver.switch_to.window(handle)
+                    logger.info("recovered from a stale or closed window handle")
+                    time.sleep(0.5)
+                except Exception:
+                    logger.info("browser window closed by the user")
+                    break
     except KeyboardInterrupt:
         logger.info("interrupted")
     except Exception as error:
