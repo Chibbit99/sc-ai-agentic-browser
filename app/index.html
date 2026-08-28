@@ -162,6 +162,7 @@
         gap: 8px; color: var(--text-muted); text-align: center; padding: 40px;
     }
     .chat-empty-logo { font-size: 2rem; font-weight: 700; color: var(--accent); letter-spacing: -0.04em; }
+    .chat-empty-hint { font-size: 0.85rem; color: var(--text-muted); margin-top: 8px; }
 
     .chat-msg { display: flex; gap: 12px; width: fit-content; max-width: min(680px, 88%); animation: messageArrive 0.25s ease both; }
     .chat-msg.user { align-self: flex-end; flex-direction: row-reverse; }
@@ -181,6 +182,39 @@
     }
     .chat-msg.ai .chat-msg-bubble { background: var(--bg-card); border: 1px solid var(--border); border-top-left-radius: 4px; }
     .chat-msg.user .chat-msg-bubble { background: var(--accent); color: white; border-top-right-radius: 4px; }
+
+    /* ---------- Tool call display ---------- */
+    .tool-call {
+        margin: 8px 0; padding: 10px 14px; border-radius: 10px;
+        background: rgba(var(--accent-rgb), 0.08); border: 1px solid rgba(var(--accent-rgb), 0.2);
+        font-size: 0.82rem; font-family: 'SF Mono', 'Fira Code', monospace;
+    }
+    .tool-call-header {
+        display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
+        font-weight: 600; color: var(--accent);
+    }
+    .tool-call-icon { font-size: 0.9rem; }
+    .tool-call-name { font-weight: 700; }
+    .tool-call-status { margin-left: auto; font-size: 0.72rem; color: var(--text-muted); }
+    .tool-call-params {
+        color: var(--text-muted); font-size: 0.78rem; margin-bottom: 6px;
+        padding: 6px 8px; background: rgba(0,0,0,0.03); border-radius: 6px;
+    }
+    [data-theme="dark"] .tool-call-params { background: rgba(255,255,255,0.03); }
+    .tool-call-result {
+        padding: 6px 8px; background: rgba(0,0,0,0.03); border-radius: 6px;
+        white-space: pre-wrap; word-break: break-word; max-height: 200px; overflow-y: auto;
+    }
+    [data-theme="dark"] .tool-call-result { background: rgba(255,255,255,0.03); }
+    .tool-call-error { color: #ef4444; }
+
+    /* ---------- Reasoning indicator ---------- */
+    .reasoning-indicator {
+        display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+        margin: 8px 0; border-radius: 8px; background: rgba(var(--accent-rgb), 0.05);
+        font-size: 0.8rem; color: var(--text-muted); font-style: italic;
+    }
+    .reasoning-icon { font-size: 0.9rem; }
 
     /* ---------- Typing indicator ---------- */
     .typing-indicator { display: flex; align-items: center; justify-content: center; padding: 12px 16px; gap: 12px; }
@@ -208,13 +242,21 @@
     }
     .btn:hover { background: var(--accent-hover); }
     .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ---------- Agentic indicator ---------- */
+    .agentic-badge {
+        display: inline-flex; align-items: center; gap: 4px; padding: 3px 8px;
+        border-radius: 6px; font-size: 0.7rem; font-weight: 600;
+        background: rgba(var(--accent-rgb), 0.15); color: var(--accent);
+        margin-left: 8px;
+    }
 </style>
 </head>
 <body>
 
     <div class="chat-header">
         <div>
-            <div class="chat-header-title"><span>SC</span>.AI</div>
+            <div class="chat-header-title"><span>SC</span>.AI <span class="agentic-badge">Agentic</span></div>
             <div class="chat-header-meta" id="chatHeaderMeta">SC.AI Agentic Browser</div>
         </div>
         <div class="header-actions">
@@ -259,6 +301,7 @@
         <div class="chat-empty" id="chatEmpty">
             <div class="chat-empty-logo">SC.AI</div>
             <div>Start a conversation below.</div>
+            <div class="chat-empty-hint">SC.AI can control your browser to help with research and tasks.</div>
         </div>
     </div>
 
@@ -271,14 +314,15 @@
 
     <script>
         // ============================================================
-        // SC.AI — NVIDIA NIM chat. The key is stored by the local SC.AI
-        // server (never in this page), and all requests are proxied
-        // through that server, so the key is never exposed to websites.
+        // SC.AI — Agentic NVIDIA NIM chat with browser automation tools.
+        // The key is stored by the local SC.AI server (never in this
+        // page), and all requests are proxied through that server.
         // ============================================================
         const NIM_API_URL = '/api/chat';
         const NIM_MODELS_URL = '/api/models';
         const API_KEY_STORAGE = 'scai.nvidia.apiKey';
         const CONVERSATION_STORAGE = 'scai.nvidia.messages';
+        const TOOLS_URL = '/api/tools';
 
         // ---- Model selector ----
         const MODELS = [
@@ -290,6 +334,8 @@
         ];
         let selectedModel = MODELS[0].id;
         let messages = loadMessages();
+        let systemPrompt = '';
+        let toolDefinitions = [];
 
         function loadMessages() {
             try {
@@ -443,6 +489,17 @@
             } catch (_) {}
         }
 
+        // Load tool definitions and system prompt from the runtime
+        async function loadTools() {
+            try {
+                const response = await fetch(TOOLS_URL, { cache: 'no-store' });
+                if (!response.ok) return;
+                const data = await response.json();
+                toolDefinitions = data.tools || [];
+                systemPrompt = data.system_prompt || '';
+            } catch (_) {}
+        }
+
         function addMessage(role, text) {
             const empty = document.getElementById('chatEmpty');
             if (empty) empty.remove();
@@ -466,6 +523,58 @@
             return msg;
         }
 
+        function addToolCall(toolName, params, result, success) {
+            const container = document.getElementById('chatMessages');
+            const el = document.createElement('div');
+            el.className = 'tool-call';
+
+            const statusIcon = success ? '✓' : '✗';
+            const statusClass = success ? '' : ' tool-call-error';
+
+            let paramsStr = '';
+            if (typeof params === 'object') {
+                paramsStr = JSON.stringify(params, null, 2);
+            } else {
+                paramsStr = String(params);
+            }
+
+            let resultStr = '';
+            if (result !== undefined && result !== null) {
+                if (typeof result === 'object') {
+                    resultStr = JSON.stringify(result, null, 2);
+                } else {
+                    resultStr = String(result);
+                }
+            }
+
+            el.innerHTML =
+                '<div class="tool-call-header">' +
+                    '<span class="tool-call-icon">🔧</span>' +
+                    '<span class="tool-call-name">' + escapeHtml(toolName) + '</span>' +
+                    '<span class="tool-call-status' + statusClass + '">' + statusIcon + '</span>' +
+                '</div>' +
+                '<div class="tool-call-params">' + escapeHtml(paramsStr) + '</div>' +
+                (resultStr ? '<div class="tool-call-result' + statusClass + '">' + escapeHtml(resultStr.substring(0, 2000)) + '</div>' : '');
+
+            container.appendChild(el);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function addReasoning(text) {
+            const container = document.getElementById('chatMessages');
+            const el = document.createElement('div');
+            el.className = 'reasoning-indicator';
+            el.innerHTML = '<span class="reasoning-icon">💭</span><span>' + escapeHtml(text) + '</span>';
+            container.appendChild(el);
+            container.scrollTop = container.scrollHeight;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         function showTyping() {
             const container = document.getElementById('chatMessages');
             const el = document.createElement('div');
@@ -479,6 +588,37 @@
         function removeTyping() {
             const el = document.getElementById('typingIndicator');
             if (el) el.remove();
+        }
+
+        // Execute a tool call via the local runtime API
+        async function executeTool(toolName, params) {
+            const endpoints = {
+                'open_tab': '/api/tool/open-tab',
+                'read_tab': '/api/tool/read-tab',
+                'search_tab': '/api/tool/search-tab',
+                'run_javascript': '/api/tool/run-js',
+                'list_tabs': '/api/tabs'
+            };
+
+            const endpoint = endpoints[toolName];
+            if (!endpoint) {
+                return { error: 'Unknown tool: ' + toolName };
+            }
+
+            try {
+                const isGet = toolName === 'list_tabs';
+                const options = {
+                    method: isGet ? 'GET' : 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                };
+                if (!isGet) {
+                    options.body = JSON.stringify(params);
+                }
+                const response = await fetch(endpoint, options);
+                return await response.json();
+            } catch (error) {
+                return { error: 'Tool execution failed: ' + error.message };
+            }
         }
 
         async function handleSend(event) {
@@ -502,10 +642,33 @@
             sendButton.disabled = true;
 
             try {
+                // Build the message payload with system prompt
+                const apiMessages = [];
+                if (systemPrompt) {
+                    apiMessages.push({ role: 'system', content: systemPrompt });
+                }
+                // Add conversation history (last 20 messages)
+                const history = messages.slice(-20);
+                apiMessages.push(...history);
+
+                const requestBody = {
+                    model: selectedModel,
+                    messages: apiMessages,
+                    temperature: 0.7,
+                    max_tokens: 2048,
+                    stream: true
+                };
+
+                // Add tool definitions if available
+                if (toolDefinitions.length > 0) {
+                    requestBody.tools = toolDefinitions;
+                    requestBody.tool_choice = 'auto';
+                }
+
                 const response = await fetch(NIM_API_URL, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
-                    body: JSON.stringify({ model: selectedModel, messages: messages, temperature: 0.7, max_tokens: 1024, stream: true })
+                    body: JSON.stringify(requestBody)
                 });
                 if (!response.ok) {
                     let detail = 'NVIDIA NIM request failed (' + response.status + ')';
@@ -528,8 +691,10 @@
                 const decoder = new TextDecoder();
                 let buffer = '';
                 let reply = '';
+                let toolCalls = [];
                 const message = addMessage('ai', '');
                 const bubble = message.querySelector('.chat-msg-bubble');
+
                 const processEvents = function (flush) {
                     const events = buffer.split(/\n\s*\n/);
                     buffer = flush ? '' : (events.pop() || '');
@@ -542,16 +707,39 @@
                             try {
                                 const data = JSON.parse(payload);
                                 const choice = data.choices && data.choices[0];
-                                const delta = choice && choice.delta && choice.delta.content;
-                                if (delta) {
-                                    reply += delta;
+                                const delta = choice && choice.delta;
+
+                                // Handle text content
+                                if (delta && delta.content) {
+                                    reply += delta.content;
                                     bubble.textContent = reply;
-                                    document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
                                 }
+
+                                // Handle tool calls
+                                if (delta && delta.tool_calls) {
+                                    delta.tool_calls.forEach(function (tc) {
+                                        // Accumulate tool call data
+                                        if (!toolCalls[tc.index]) {
+                                            toolCalls[tc.index] = {
+                                                id: tc.id || '',
+                                                name: '',
+                                                arguments: ''
+                                            };
+                                        }
+                                        if (tc.id) toolCalls[tc.index].id = tc.id;
+                                        if (tc.function) {
+                                            if (tc.function.name) toolCalls[tc.index].name = tc.function.name;
+                                            if (tc.function.arguments) toolCalls[tc.index].arguments += tc.function.arguments;
+                                        }
+                                    });
+                                }
+
+                                document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
                             } catch (_) {}
                         });
                     });
                 };
+
                 while (true) {
                     const chunk = await reader.read();
                     if (chunk.done) break;
@@ -560,8 +748,118 @@
                 }
                 buffer += decoder.decode();
                 processEvents(true);
-                if (!reply) { message.remove(); throw new Error('NVIDIA NIM returned no streamed content.'); }
-                messages.push({ role: 'assistant', content: reply });
+
+                // Handle tool calls if any
+                if (toolCalls.length > 0) {
+                    // Add the assistant's text reply if any
+                    if (reply) {
+                        messages.push({ role: 'assistant', content: reply });
+                    }
+
+                    // Execute each tool call
+                    for (const tc of toolCalls) {
+                        if (!tc.name) continue;
+
+                        let params = {};
+                        try {
+                            params = JSON.parse(tc.arguments);
+                        } catch (_) {}
+
+                        // Show reasoning
+                        addReasoning('Using ' + tc.name + '...');
+
+                        // Execute the tool
+                        const result = await executeTool(tc.name, params);
+
+                        // Display the tool call
+                        addToolCall(tc.name, params, result, !result.error);
+
+                        // Add tool result to message history
+                        messages.push({
+                            role: 'assistant',
+                            content: null,
+                            tool_calls: [{
+                                id: tc.id,
+                                type: 'function',
+                                function: {
+                                    name: tc.name,
+                                    arguments: tc.arguments
+                                }
+                            }]
+                        });
+                        messages.push({
+                            role: 'tool',
+                            tool_call_id: tc.id,
+                            content: JSON.stringify(result)
+                        });
+                    }
+
+                    // Get AI's response after tool execution
+                    showTyping();
+                    const followUpMessages = [];
+                    if (systemPrompt) {
+                        followUpMessages.push({ role: 'system', content: systemPrompt });
+                    }
+                    followUpMessages.push(...messages.slice(-30));
+
+                    const followUpResponse = await fetch(NIM_API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Accept': 'text/event-stream' },
+                        body: JSON.stringify({
+                            model: selectedModel,
+                            messages: followUpMessages,
+                            temperature: 0.7,
+                            max_tokens: 2048,
+                            stream: true
+                        })
+                    });
+
+                    if (followUpResponse.ok) {
+                        const followUpContentType = followUpResponse.headers.get('content-type') || '';
+                        if (followUpContentType.indexOf('text/event-stream') !== -1) {
+                            const followUpReader = followUpResponse.body.getReader();
+                            let followUpBuffer = '';
+                            let followUpReply = '';
+                            const followUpMessage = addMessage('ai', '');
+                            const followUpBubble = followUpMessage.querySelector('.chat-msg-bubble');
+
+                            while (true) {
+                                const chunk = await followUpReader.read();
+                                if (chunk.done) break;
+                                followUpBuffer += decoder.decode(chunk.value, { stream: true }).replace(/\r/g, '');
+                                const followUpEvents = followUpBuffer.split(/\n\s*\n/);
+                                followUpBuffer = followUpEvents.pop() || '';
+                                followUpEvents.forEach(function (event) {
+                                    event.split('\n').forEach(function (line) {
+                                        line = line.trim();
+                                        if (!line.startsWith('data:')) return;
+                                        const payload = line.slice(5).trim();
+                                        if (!payload || payload === '[DONE]') return;
+                                        try {
+                                            const data = JSON.parse(payload);
+                                            const choice = data.choices && data.choices[0];
+                                            const delta = choice && choice.delta && choice.delta.content;
+                                            if (delta) {
+                                                followUpReply += delta;
+                                                followUpBubble.textContent = followUpReply;
+                                                document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
+                                            }
+                                        } catch (_) {}
+                                    });
+                                });
+                            }
+                            if (followUpReply) {
+                                messages.push({ role: 'assistant', content: followUpReply });
+                            }
+                        }
+                    }
+                } else if (!reply) {
+                    message.remove();
+                    throw new Error('NVIDIA NIM returned no streamed content.');
+                } else {
+                    messages.push({ role: 'assistant', content: reply });
+                }
+
                 localStorage.setItem(CONVERSATION_STORAGE, JSON.stringify(messages.slice(-20)));
             } catch (error) {
                 messages.pop();
@@ -575,11 +873,16 @@
 
         function renderSavedMessages() {
             messages.forEach(function (message) {
-                addMessage(message.role === 'user' ? 'user' : 'ai', message.content);
+                if (message.role === 'user') {
+                    addMessage('user', message.content);
+                } else if (message.role === 'assistant' && message.content) {
+                    addMessage('ai', message.content);
+                }
             });
         }
         loadApiKey().then(function () { if (savedApiKey) loadModels(); });
         loadRuntimeInfo();
+        loadTools();
         updateApiKeyStatus();
         renderSavedMessages();
 
