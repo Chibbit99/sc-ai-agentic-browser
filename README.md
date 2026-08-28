@@ -10,6 +10,10 @@ a local proxy server.
 SC.AI **never bundles a browser** — it detects the browsers you already have
 installed and lets you pick one.
 
+SC.AI is **agentic**: the AI can control your browser to help with research
+and tasks. It can open tabs, read page content, search for information, and
+run JavaScript — all through natural conversation.
+
 ---
 
 ## Installation
@@ -76,6 +80,35 @@ uninstaller first if desired:
 ```bash
 bash ~/sc-ai/uninstall.sh
 ```
+
+---
+
+## Agentic Browser Control
+
+SC.AI includes browser automation tools that the AI can use when you ask it
+to browse the web, research topics, or interact with websites:
+
+| Tool | Description |
+|---|---|
+| `open_tab` | Open a new browser tab with any URL |
+| `read_tab` | Read the current page content (text or HTML) |
+| `search_tab` | Search for specific strings on the current page |
+| `run_javascript` | Execute custom JavaScript on any page |
+| `list_tabs` | See all open browser tabs |
+
+### How it works
+
+1. You ask SC.AI to do something (e.g., "Find the latest news about AI")
+2. SC.AI reasons about which tools to use
+3. It opens tabs, reads content, and searches for relevant information
+4. It summarizes its findings in a clear response
+
+### Example prompts
+
+- "Open github.com and tell me about the repository"
+- "Search for Python tutorials on Google and summarize the top results"
+- "Read the current page and extract all the links"
+- "Run JavaScript to get the page title and URL"
 
 ---
 

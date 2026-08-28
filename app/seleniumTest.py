@@ -25,6 +25,16 @@ Security notes
   served over HTTP and is never sent anywhere.
 * The NVIDIA API key is stored in the SC.AI config file (chmod 0600) and is
   only used to authenticate NVIDIA requests from the local server.
+
+Agentic capabilities
+--------------------
+The runtime exposes browser automation tools that allow the AI to control
+the browser via HTTP endpoints:
+- GET  /api/tabs           List all open tabs
+- POST /api/tool/open-tab  Open a new tab with a URL
+- POST /api/tool/read-tab  Read the text/HTML content of a tab
+- POST /api/tool/search-tab Search for a string in a tab
+- POST /api/tool/run-js    Run JavaScript on a tab
 """
 
 import argparse
@@ -32,6 +42,7 @@ import atexit
 import json
 import logging
 import os
+import re
 import sys
 import threading
 import time
@@ -47,7 +58,7 @@ if not getattr(sys, "frozen", False):
 from app import browsers, scai_common as common
 
 NVIDIA_API = "https://integrate.api.nvidia.com/v1"
-BUILD_VERSION = "scai-runtime-2026-08-27-v1"
+BUILD_VERSION = "scai-runtime-2026-08-28-v2"
 
 if getattr(sys, "frozen", False):
     BASE_PATH = Path(getattr(sys, "_MEIPASS", Path(__file__).parent))
@@ -59,6 +70,134 @@ logger = common.setup_logger("runtime")
 # Filled in by main() before the server starts; exposed via /api/info so the
 # frontend can tell the user which browser/profile it is running on.
 RUNTIME_INFO: dict[str, str] = {}
+
+# Global reference to the Selenium driver, shared with the HTTP handler.
+_DRIVER = None
+_DRIVER_LOCK = threading.Lock()
+
+
+# ============================================================
+# System prompt for agentic browser control
+# ============================================================
+
+SYSTEM_PROMPT = """You are SC.AI, an agentic browser assistant. You can control the user's browser to help them with tasks.
+
+When you need to browse the web, read pages, or interact with websites, use the browser tools provided. Always explain what you're doing before using a tool, and summarize what you found after.
+
+Available browser tools:
+- open_tab: Open a new browser tab with a URL
+- read_tab: Read the current page content (text or HTML)
+- search_tab: Search for a string on the current page
+- run_javascript: Run JavaScript on the current page
+- list_tabs: See all open browser tabs
+
+Guidelines:
+- Always tell the user what you're about to do before using a tool.
+- Use read_tab after opening a page to see its content.
+- Use search_tab when looking for specific information on a page.
+- Use run_javascript for complex interactions or extracting structured data.
+- Summarize your findings clearly for the user.
+- If a tool fails, explain what went wrong and suggest alternatives.
+"""
+
+# Tool definitions for NVIDIA NIM function calling
+TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "open_tab",
+            "description": "Open a new browser tab with the specified URL",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The URL to open in the new tab"
+                    }
+                },
+                "required": ["url"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_tab",
+            "description": "Read the content of the current browser tab",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "format": {
+                        "type": "string",
+                        "enum": ["text", "html"],
+                        "description": "Return format: 'text' for visible text only, 'html' for full HTML source",
+                        "default": "text"
+                    },
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "Index of the tab to read (0-based). Defaults to the currently active tab.",
+                        "default": -1
+                    }
+                }
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_tab",
+            "description": "Search for a string within the current browser tab's content",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "The string to search for (case-insensitive)"
+                    },
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "Index of the tab to search (0-based). Defaults to the currently active tab.",
+                        "default": -1
+                    }
+                },
+                "required": ["query"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "run_javascript",
+            "description": "Execute JavaScript code on the current browser tab and return the result",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "code": {
+                        "type": "string",
+                        "description": "JavaScript code to execute. The return value will be sent back."
+                    },
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "Index of the tab to run JS on (0-based). Defaults to the currently active tab.",
+                        "default": -1
+                    }
+                },
+                "required": ["code"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_tabs",
+            "description": "List all open browser tabs with their titles and URLs",
+            "parameters": {
+                "type": "object",
+                "properties": {}
+            }
+        }
+    }
+]
 
 
 class AppHandler(BaseHTTPRequestHandler):
@@ -77,6 +216,13 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/info":
             self.send_json(RUNTIME_INFO)
+            return
+        if route == "/api/tabs":
+            self.handle_list_tabs()
+            return
+        if route == "/api/tools":
+            # Return tool definitions for the frontend
+            self.send_json({"tools": TOOL_DEFINITIONS, "system_prompt": SYSTEM_PROMPT})
             return
         if route == "/":
             try:
@@ -98,6 +244,18 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/chat":
             self.proxy_chat()
+            return
+        if route == "/api/tool/open-tab":
+            self.handle_open_tab()
+            return
+        if route == "/api/tool/read-tab":
+            self.handle_read_tab()
+            return
+        if route == "/api/tool/search-tab":
+            self.handle_search_tab()
+            return
+        if route == "/api/tool/run-js":
+            self.handle_run_js()
             return
         self.send_error(404)
 
@@ -159,11 +317,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 logger.info("NVIDIA upstream chat status %s", response.status)
                 upstream_type = response.headers.get("Content-Type", "")
                 if "text/event-stream" in upstream_type:
-                    # Stream SSE line-by-line. Reading 8KB chunks would make
-                    # http.client accumulate many events before returning, so
-                    # the browser would see the whole reply arrive at once.
-                    # Each readline() returns as soon as a line is available,
-                    # so tokens reach the browser as they are generated.
+                    # Stream SSE line-by-line
                     self.send_response(response.status)
                     self.send_header("Content-Type", "text/event-stream")
                     self.send_header("Cache-Control", "no-cache")
@@ -173,15 +327,12 @@ class AppHandler(BaseHTTPRequestHandler):
                         line = response.readline()
                         if not line:
                             break
-                        # Normalize CRLF to LF so events are separated by \n\n.
                         line = line.replace(b"\r\n", b"\n")
                         self.wfile.write(b"%x\r\n%s\r\n" % (len(line), line))
                         self.wfile.flush()
                     self.wfile.write(b"0\r\n\r\n")
                     self.wfile.flush()
                 else:
-                    # Non-streaming JSON response: forward with the upstream
-                    # content type so the page's JSON fallback path handles it.
                     body = response.read()
                     self.send_response(response.status)
                     self.send_header("Content-Type", upstream_type or "application/json")
@@ -205,6 +356,180 @@ class AppHandler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(content)
+
+    # ============================================================
+    # Browser automation tool handlers
+    # ============================================================
+
+    def handle_list_tabs(self):
+        """List all open browser tabs."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            tabs = []
+            current = driver.current_window_handle
+            for i, handle in enumerate(driver.window_handles):
+                driver.switch_to.window(handle)
+                tabs.append({
+                    "index": i,
+                    "url": driver.current_url,
+                    "title": driver.title,
+                    "active": handle == current
+                })
+            driver.switch_to.window(current)
+            self.send_json({"tabs": tabs})
+        except Exception as error:
+            logger.exception("list_tabs error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_open_tab(self):
+        """Open a new browser tab with the specified URL."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            url = payload.get("url", "").strip()
+            if not url:
+                self.send_json({"error": "url is required"}, 400)
+                return
+            # Add protocol if missing
+            if not url.startswith(("http://", "https://", "file://")):
+                url = "https://" + url
+            # Open new tab and navigate
+            driver.execute_script(f"window.open('{url}', '_blank');")
+            time.sleep(0.5)
+            # Switch to the new tab
+            handles = driver.window_handles
+            driver.switch_to.window(handles[-1])
+            # Wait for page to load
+            time.sleep(1)
+            self.send_json({
+                "success": True,
+                "url": driver.current_url,
+                "title": driver.title
+            })
+        except Exception as error:
+            logger.exception("open_tab error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_read_tab(self):
+        """Read the content of a browser tab."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            tab_index = payload.get("tab_index", -1)
+            fmt = payload.get("format", "text")
+            # Switch to the requested tab
+            handles = driver.window_handles
+            if tab_index >= 0 and tab_index < len(handles):
+                driver.switch_to.window(handles[tab_index])
+            if fmt == "html":
+                content = driver.page_source
+            else:
+                # Get visible text only
+                content = driver.execute_script("return document.body.innerText;")
+            self.send_json({
+                "url": driver.current_url,
+                "title": driver.title,
+                "content": content[:50000],  # Limit to 50KB
+                "format": fmt
+            })
+        except Exception as error:
+            logger.exception("read_tab error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_search_tab(self):
+        """Search for a string within a browser tab."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            query = payload.get("query", "").strip()
+            tab_index = payload.get("tab_index", -1)
+            if not query:
+                self.send_json({"error": "query is required"}, 400)
+                return
+            # Switch to the requested tab
+            handles = driver.window_handles
+            if tab_index >= 0 and tab_index < len(handles):
+                driver.switch_to.window(handles[tab_index])
+            # Get the page text and search
+            text = driver.execute_script("return document.body.innerText;")
+            # Find all occurrences with context
+            matches = []
+            lower_text = text.lower()
+            lower_query = query.lower()
+            start = 0
+            while True:
+                pos = lower_text.find(lower_query, start)
+                if pos == -1:
+                    break
+                # Get context: 100 chars before and after
+                context_start = max(0, pos - 100)
+                context_end = min(len(text), pos + len(query) + 100)
+                context = text[context_start:context_end]
+                matches.append({
+                    "position": pos,
+                    "context": context
+                })
+                start = pos + 1
+                if len(matches) >= 10:  # Limit results
+                    break
+            self.send_json({
+                "url": driver.current_url,
+                "title": driver.title,
+                "query": query,
+                "found": len(matches) > 0,
+                "total_matches": len(matches),
+                "matches": matches
+            })
+        except Exception as error:
+            logger.exception("search_tab error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_run_js(self):
+        """Run JavaScript on a browser tab."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            code = payload.get("code", "").strip()
+            tab_index = payload.get("tab_index", -1)
+            if not code:
+                self.send_json({"error": "code is required"}, 400)
+                return
+            # Switch to the requested tab
+            handles = driver.window_handles
+            if tab_index >= 0 and tab_index < len(handles):
+                driver.switch_to.window(handles[tab_index])
+            # Execute the JavaScript
+            result = driver.execute_script(code)
+            # Convert result to JSON-serializable format
+            if result is None:
+                result_str = "undefined"
+            elif isinstance(result, str):
+                result_str = result
+            else:
+                result_str = json.dumps(result, indent=2)
+            self.send_json({
+                "url": driver.current_url,
+                "title": driver.title,
+                "result": result_str[:10000]  # Limit output size
+            })
+        except Exception as error:
+            logger.exception("run_js error")
+            self.send_json({"error": str(error)}, 500)
 
     def log_message(self, *_args):
         pass
@@ -303,6 +628,7 @@ def parse_args(argv):
 
 
 def main(argv=None) -> int:
+    global _DRIVER
     args = parse_args(argv)
     logger.info(
         "SC.AI %s starting (browser=%s path=%s)", BUILD_VERSION, args.browser, args.browser_path
@@ -402,12 +728,13 @@ def main(argv=None) -> int:
     driver = None
     try:
         driver = create_driver(spec.driver_kind, browser_path, profile_path)
+        _DRIVER = driver  # Expose driver to HTTP handlers for tool execution
         url = f"http://127.0.0.1:{port}/"
         driver.get(url)
         common.write_state(
             {"status": "running", "browser": browser_id, "port": port, "pid": os.getpid()}
         )
-        logger.info("SC.AI opened in %s", spec.name)
+        logger.info("SC.AI opened in %s with agentic capabilities", spec.name)
         # Stay alive until the user closes the browser window. Polling the
         # URL is the standard way to notice that the window went away.
         while True:
@@ -432,6 +759,7 @@ def main(argv=None) -> int:
         common.write_state({"status": "error", "message": detail})
         return 1
     finally:
+        _DRIVER = None
         if driver is not None:
             try:
                 driver.quit()
