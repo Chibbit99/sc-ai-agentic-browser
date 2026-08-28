@@ -174,6 +174,27 @@ def detect_browsers() -> list[DetectedBrowser]:
     return list(found.values())
 
 
+def _snap_firefox_binary() -> Path | None:
+    """Find Firefox's real executable inside an installed Snap revision.
+
+    /snap/firefox/current is a Snap-maintained symlink and therefore is
+    intentionally discovered at runtime rather than hardcoded to a revision.
+    """
+    snap_root = Path("/snap")
+    for mount in (snap_root / "firefox" / "current", snap_root / "firefox"):
+        if not mount.exists():
+            continue
+        for relative in (
+            Path("usr/lib/firefox/firefox"),
+            Path("usr/lib/firefox/firefox-bin"),
+            Path("firefox"),
+        ):
+            candidate = mount / relative
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return candidate
+    return None
+
+
 def _firefox_binary(path: str) -> str | None:
     """Resolve a usable Firefox executable, including distro wrappers.
 
@@ -199,6 +220,10 @@ def _firefox_binary(path: str) -> str | None:
                     candidates.append(Path(match))
         except OSError:
             pass
+
+    snap_binary = _snap_firefox_binary()
+    if snap_binary is not None:
+        candidates.append(snap_binary)
 
     roots = [
         Path("/usr/lib/firefox"),

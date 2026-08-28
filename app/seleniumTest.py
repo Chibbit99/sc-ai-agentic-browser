@@ -427,8 +427,9 @@ def main(argv=None) -> int:
         if spec.driver_kind == "firefox" and "not a Firefox executable" in detail:
             detail = (
                 f"The selected Firefox path is not a Firefox executable: {browser_path}. "
-                "Install Firefox from your distribution, or choose the native Firefox "
-                "executable rather than a package-manager wrapper."
+                "Install Firefox from your distribution, or ensure the installed Snap "
+                "contains its real Firefox binary. Launching a package-manager wrapper "
+                "directly is not supported."
             )
         common.write_state({"status": "error", "message": detail})
         return 1
