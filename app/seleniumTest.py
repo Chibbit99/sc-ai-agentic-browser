@@ -243,9 +243,9 @@ def _create_firefox(browser_path: str, profile_path: Path):
     # incompatible startup preferences from an interrupted session.
     options.add_argument("-profile")
     options.add_argument(str(profile_path))
-    options.set_preference("browser.shell.checkDefaultBrowser", False)
-    options.set_preference("browser.startup.page", 1)
-    options.set_preference("browser.startup.homepage", "about:blank")
+    # Do not inject preferences into an existing Firefox profile. Snap Firefox
+    # can reject a session when geckodriver receives a generated preferences
+    # payload that conflicts with the profile's own files.
     return webdriver.Firefox(options=options)
 
 
