@@ -459,12 +459,14 @@
 
         // Friendly labels for tool names
         const TOOL_LABELS = {
+            'reasoning': { icon: '🧠', label: 'Reasoning', summary: function(p) { return (p.reasoning || ''); } },
             'open_tab': { icon: '🌐', label: 'Open Tab', summary: function(p) { return p.url || ''; } },
             'read_tab': { icon: '📖', label: 'Read Page', summary: function(p) { return p.format === 'html' ? 'HTML content' : 'page text'; } },
-            'search_tab': { icon: '🔍', label: 'Search Page', summary: function(p) { return '"' + (p.query || '') + '"'; } },
+            'search_tab': { icon: '🔍', label: 'Search Page', summary: function(p) { return '"' + (p.query || '') + '"' + (p.format === 'html' ? ' (HTML)' : ''); } },
             'run_javascript': { icon: '⚡', label: 'Run JavaScript', summary: function(p) { var c = (p.code || '').split('\n')[0]; return c.length > 50 ? c.substring(0, 50) + '…' : c; } },
             'list_tabs': { icon: '📑', label: 'List Tabs', summary: function() { return 'all open tabs'; } },
             'switch_tab': { icon: '↗', label: 'Switch Tab', summary: function(p) { return 'tab #' + (p.tab_index != null ? p.tab_index : '?'); } },
+            'close_tab': { icon: '❌', label: 'Close Tab', summary: function(p) { return 'tab #' + (p.tab_index != null ? p.tab_index : '?'); } },
             'click_element': { icon: '🖱️', label: 'Click Element', summary: function(p) { return p.selector || ''; } },
             'type_text': { icon: '⌨️', label: 'Type Text', summary: function(p) { var s = p.selector || ''; var t = p.text ? String(p.text) : ''; return s + (t ? ' → "' + t.substring(0, 40) + (t.length > 40 ? '…' : '') + '"' : ''); } }
         };
@@ -783,6 +785,10 @@
         }
 
         async function executeTool(toolName, params) {
+            // reasoning is an internal planning tool — no backend call.
+            if (toolName === 'reasoning') {
+                return { result: 'Reasoning recorded.', success: true };
+            }
             const endpoints = {
                 'open_tab': '/api/tool/open-tab',
                 'read_tab': '/api/tool/read-tab',
@@ -790,6 +796,7 @@
                 'run_javascript': '/api/tool/run-js',
                 'list_tabs': '/api/tabs',
                 'switch_tab': '/api/tool/switch-tab',
+                'close_tab': '/api/tool/close-tab',
                 'click_element': '/api/tool/click-element',
                 'type_text': '/api/tool/type-text'
             };
@@ -918,10 +925,12 @@
             const sse = createSSEStreamProcessor();
             let streamBuffer = '';
 
-            // Placeholder bubble for streamed text; removed if this turn
-            // only contains tool calls (no text).
-            const message = addMessage('ai', '');
-            const bubble = message.querySelector('.chat-msg-bubble');
+            // The AI bubble is created lazily, only once the model actually
+            // starts producing text. Tool-only turns therefore never leave an
+            // empty chat bubble behind (the glitch some users saw between
+            // tool calls).
+            let message = null;
+            let bubble = null;
             let replyStarted = false;
 
             while (true) {
@@ -935,7 +944,12 @@
                 // Update the bubble with streamed text
                 const currentReply = sse.getReply();
                 if (currentReply) {
-                    if (!replyStarted) { removeTyping(); replyStarted = true; }
+                    if (!replyStarted) {
+                        removeTyping();
+                        replyStarted = true;
+                        message = addMessage('ai', '');
+                        bubble = message.querySelector('.chat-msg-bubble');
+                    }
                     bubble.innerHTML = markdownToHtml(currentReply);
                     document.getElementById('chatMessages').scrollTop = document.getElementById('chatMessages').scrollHeight;
                 }
@@ -948,15 +962,11 @@
             const reply = sse.getReply();
             const toolCalls = sse.getToolCalls();
 
-            // If only tool calls (no text), that's OK — proceed to execute
+            // If only tool calls (no text), that's OK — proceed to execute.
+            // Because the bubble is created lazily, there is nothing to
+            // remove here.
             if (!reply && toolCalls.length === 0) {
-                message.remove();
                 throw new Error('NVIDIA NIM returned no content.');
-            }
-            if (!reply) {
-                // Tool-only turn: drop the empty bubble so no blank chat
-                // message is left behind.
-                message.remove();
             }
             return { reply: reply, toolCalls: toolCalls };
         }

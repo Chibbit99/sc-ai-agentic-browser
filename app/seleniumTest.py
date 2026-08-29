@@ -85,25 +85,51 @@ _DRIVER_LOCK = threading.Lock()
 
 SYSTEM_PROMPT = """You are SC.AI, an agentic browser assistant. You control the user's browser using tools.
 
+WORKFLOW:
+1. First call list_tabs to discover the open tabs. From those results pick the exact tab you need and always pass its tab_index to tab tools.
+2. Use the reasoning tool to think step by step before complex actions and after each tool result.
+3. For each task decide the right sequence (open -> read -> search -> reason -> click/type -> reason -> summarize).
+4. When the task is complete, reply to the user with a clear summary in normal chat text.
+
 RULES:
-1. When you need to browse, read, search, or interact with websites, call the appropriate tool.
-2. You may call multiple tools in sequence to complete a task.
-3. After receiving tool results, summarize what you found for the user.
-4. Always explain what you did and what you found.
+- ALWAYS pass tab_index for read_tab, search_tab, run_javascript, click_element, and type_text. Take the index from a recent list_tabs result — never assume index 0 is the right tab.
+- Prefer read_tab with format "text" (clean visible text). Use "html" only when you need structure, links, or attributes — HTML output has no <head>, scripts, or styles.
+- If a tool result is confusing or incomplete, run_javascript to inspect the page further (e.g. query the DOM) rather than guessing.
+- If running into an interactive page, combine read/search with click_element and type_text to navigate.
+- The reasoning tool is only for your internal analysis. Never use it to answer the user — final answers are normal chat text.
 
 TOOLS:
+- reasoning: Think through the task step by step. Pass your analysis as the argument. Call it before planning actions and after every tool result that changes what you do next. It does not interact with the browser or the user.
 - open_tab: Open a URL in a new tab. Always pass a full URL.
-- read_tab: Read the page content. Pass tab_index (0-based) to target a specific tab, or omit it to read the tab the user is currently viewing. Returns page text.
-- search_tab: Search page text for a string. Pass query and optionally tab_index.
-- run_javascript: Execute JS on a page and return the result. Pass code and optionally tab_index.
+- read_tab: Read the page content. Pass tab_index (0-based) to target a specific tab and format "text" or "html". Returns page content.
+- search_tab: Search a page for a string. Pass query and tab_index. Default searches visible page text; pass format "html" to search the raw HTML source (includes attributes, links and script-generated markup). If a text search finds nothing, it automatically falls back to searching the HTML.
+- run_javascript: Execute JS on a page and return the result. Pass code and tab_index. The value of the last expression in the code is returned to you (objects and page elements are described, not just "undefined"), and anything the code logs with console.log/console.warn/console.error is also returned to you.
 - list_tabs: List all open tabs with titles and URLs.
 - switch_tab: Switch to a specific tab by index.
-- click_element: Click an element on the page. Pass selector (CSS selector, or XPath starting with //) and optionally index for the nth match.
-- type_text: Type text into an input, textarea, or contenteditable on the page. Pass selector and text; pass clear=false to append instead of replacing existing content.
+- close_tab: Close a browser tab by its index. Pass tab_index. The SC.AI interface tab cannot be closed.
+- click_element: Click an element on the page. Pass selector (CSS selector, or XPath starting with //) and optionally index for the nth match, and tab_index.
+- type_text: Type text into an input, textarea, or contenteditable. Pass selector, text, and tab_index; pass clear=false to append instead of replacing.
 """
 
 # Tool definitions for NVIDIA NIM function calling
 TOOL_DEFINITIONS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "reasoning",
+            "description": "Think through the task step by step. Use it to plan before acting and to evaluate each tool result. Does not touch the browser or the user.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Your step-by-step analysis and plan"
+                    }
+                },
+                "required": ["reasoning"]
+            }
+        }
+    },
     {
         "type": "function",
         "function": {
@@ -155,6 +181,12 @@ TOOL_DEFINITIONS = [
                     "query": {
                         "type": "string",
                         "description": "The string to search for (case-insensitive)"
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["text", "html"],
+                        "description": "Search 'text' (visible page text, default) or 'html' (raw HTML source including attributes). Falls back to HTML automatically when text yields no match.",
+                        "default": "text"
                     },
                     "tab_index": {
                         "type": "integer",
@@ -210,6 +242,23 @@ TOOL_DEFINITIONS = [
                     "tab_index": {
                         "type": "integer",
                         "description": "The 0-based index of the tab to switch to"
+                    }
+                },
+                "required": ["tab_index"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "close_tab",
+            "description": "Close a browser tab by its index. The SC.AI interface tab cannot be closed.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tab_index": {
+                        "type": "integer",
+                        "description": "The 0-based index of the tab to close"
                     }
                 },
                 "required": ["tab_index"]
@@ -333,6 +382,15 @@ class _CleanHTMLParser(HTMLParser):
 
 
 def _clean_html(source):
+    # Drop the <head> entirely (link/meta/preload/junk) and, when a <body>
+    # exists, keep only its contents so HTML reads are dominated by real page
+    # content rather than asset plumbing.
+    source = re.sub(
+        r"<head[^>]*>[\s\S]*?</head>", "", source, flags=re.IGNORECASE
+    )
+    body_match = re.search(r"<body[^>]*>([\s\S]*?)</body>", source, flags=re.IGNORECASE | re.DOTALL)
+    if body_match:
+        source = body_match.group(1)
     parser = _CleanHTMLParser()
     try:
         parser.feed(source)
@@ -423,6 +481,119 @@ def _find_element(driver, selector, index=0):
     return element
 
 
+def _flash_element(driver, element, color=None):
+    """Glow an element the AI is about to interact with, so the action is
+    obvious to the user. A soft ring that fades out automatically."""
+    if color is None:
+        color = "rgba(31, 111, 107, 0.85)"
+    script = (
+        "(function(el, color){"
+        "  if (!el || !el.getBoundingClientRect) return;"
+        "  var oldShadow = el.style.boxShadow, oldOutline = el.style.outline,"
+        "      oldOffset = el.style.outlineOffset, oldTransition = el.style.transition;"
+        "  el.style.transition = 'box-shadow .18s ease, outline .18s ease';"
+        "  el.style.boxShadow = '0 0 0 4px ' + color + ', 0 0 22px 8px ' + color;"
+        "  el.style.outline = '2px solid ' + color;"
+        "  el.style.outlineOffset = '2px';"
+        "  setTimeout(function(){"
+        "    el.style.boxShadow = oldShadow; el.style.outline = oldOutline;"
+        "    el.style.outlineOffset = oldOffset; el.style.transition = oldTransition;"
+        "  }, 2000);"
+        "})(arguments[0], arguments[1]);"
+    )
+    try:
+        driver.execute_script(script, element, color)
+    except Exception:
+        pass
+
+
+def _serialize_js_result(result, depth=0):
+    """Turn a run_js result into a compact, readable string.
+
+    Handles the values LLM-generated JS commonly returns (objects, arrays,
+    DOM elements, deep/cyclic structures) that would otherwise make
+    json.dumps blow up, so run_js reliably reports real info back to the AI.
+    """
+    if depth > 5:
+        return "..."
+    from selenium.webdriver.remote.webelement import WebElement
+    if result is None:
+        return "null"
+    if isinstance(result, bool):
+        return "true" if result else "false"
+    if isinstance(result, (int, float)):
+        return repr(result)
+    if isinstance(result, str):
+        return result
+    if isinstance(result, WebElement):
+        try:
+            parts = [f"<{result.tag_name}"]
+            for attr in ("id", "class", "name", "href", "type", "src", "aria-label", "title", "placeholder", "data-testid"):
+                value = result.get_attribute(attr)
+                if value:
+                    parts.append(f' {attr}="{str(value)[:60]}"')
+            text = (result.text or "").strip()[:120]
+            if text:
+                parts.append(f'>{text}')
+            else:
+                parts.append(">")
+            return "".join(parts)
+        except Exception:
+            return "<element>"
+    if isinstance(result, list):
+        items = [_serialize_js_result(item, depth + 1) for item in result[:25]]
+        if len(result) > 25:
+            items.append(f"... (+{len(result) - 25} more)")
+        return "[" + ", ".join(items) + "]"
+    if isinstance(result, dict):
+        items = []
+        for key, value in list(result.items())[:25]:
+            items.append(f"{key}: {_serialize_js_result(value, depth + 1)}")
+        if len(result) > 25:
+            items.append(f"... (+{len(result) - 25} more)")
+        return "{" + ", ".join(items) + "}"
+    try:
+        return repr(result)
+    except Exception:
+        return str(result)
+
+
+def _run_js_capture(driver, code):
+    """Execute JS and capture any console.log/info/warn/error output.
+
+    Selenium cannot read console output directly, so a console interceptor is
+    installed on the page first, the user's script runs, and the collected
+    lines are returned alongside the script's result value.
+    """
+    setup = (
+        "(function(){"
+        "  if (typeof window.__scaiLogs === 'undefined') {"
+        "    window.__scaiLogs = [];"
+        "    ['log','info','warn','error','debug'].forEach(function(lv){"
+        "      var orig = console[lv].bind(console);"
+        "      console[lv] = function(){"
+        "        var parts = [];"
+        "        for (var i = 0; i < arguments.length; i++){"
+        "          var a = arguments[i];"
+        "          if (a && typeof a === 'object'){"
+        "            try { parts.push(JSON.stringify(a)); } catch (e) { parts.push(String(a)); }"
+        "          } else { parts.push(String(a)); }"
+        "        }"
+        "        try { window.__scaiLogs.push(lv + ': ' + parts.join(' ')); } catch (e) {}"
+        "        return orig.apply(console, arguments);"
+        "      };"
+        "    });"
+        "  }"
+        "  window.__scaiLogs.length = 0;"
+        "  return true;"
+        "})();"
+    )
+    driver.execute_script(setup)
+    result = driver.execute_script(code)
+    logs = driver.execute_script("return (window.__scaiLogs || []).slice();")
+    return result, logs
+
+
 class AppHandler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
 
@@ -482,6 +653,9 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         if route == "/api/tool/switch-tab":
             self.handle_switch_tab()
+            return
+        if route == "/api/tool/close-tab":
+            self.handle_close_tab()
             return
         if route == "/api/tool/click-element":
             self.handle_click_element()
@@ -737,7 +911,7 @@ class AppHandler(BaseHTTPRequestHandler):
             self.send_json({"error": str(error)}, 500)
 
     def handle_search_tab(self):
-        """Search for a string within a browser tab."""
+        """Search for a string within a browser tab (visible text or HTML)."""
         driver = _DRIVER
         if driver is None:
             self.send_json({"error": "Browser not ready"}, 503)
@@ -748,13 +922,26 @@ class AppHandler(BaseHTTPRequestHandler):
             if not query:
                 self.send_json({"error": "query is required"}, 400)
                 return
+            fmt = payload.get("format", "text")
             tab_index = _payload_tab_index(payload)
+            used = fmt
             with _DRIVER_LOCK:
                 _resolve_tab(driver, tab_index)
-                text = driver.execute_script("return document.body.innerText;") or ""
-                if not text.strip():
-                    time.sleep(1.0)
+                if fmt == "html":
+                    text = _clean_html(driver.page_source)
+                else:
                     text = driver.execute_script("return document.body.innerText;") or ""
+                    if not text.strip():
+                        time.sleep(1.0)
+                        text = driver.execute_script("return document.body.innerText;") or ""
+                    # If the string is not in the visible text, fall back to the
+                    # HTML source: the match may live in an attribute, a link,
+                    # or markup that never surfaces in innerText.
+                    if query.lower() not in text.lower():
+                        html_source = _clean_html(driver.page_source)
+                        if query.lower() in html_source.lower():
+                            text = html_source
+                            used = "html"
                 title = driver.title
                 url = driver.current_url
             matches = []
@@ -765,8 +952,8 @@ class AppHandler(BaseHTTPRequestHandler):
                 pos = lower_text.find(lower_query, start)
                 if pos == -1:
                     break
-                ctx_start = max(0, pos - 80)
-                ctx_end = min(len(text), pos + len(query) + 80)
+                ctx_start = max(0, pos - 100)
+                ctx_end = min(len(text), pos + len(query) + 100)
                 matches.append(text[ctx_start:ctx_end].strip())
                 start = pos + 1
                 if len(matches) >= 5:
@@ -774,7 +961,8 @@ class AppHandler(BaseHTTPRequestHandler):
             if not matches:
                 result = f"No matches for '{query}' on {title} ({url})"
             else:
-                result = f"Found {len(matches)} match(es) for '{query}' on {title}:\n"
+                where = "HTML" if used == "html" else "page text"
+                result = f"Found {len(matches)} match(es) for '{query}' in {where} on {title} ({url}):\n"
                 for i, m in enumerate(matches, 1):
                     result += f"{i}. ...{m}...\n"
             self.send_json({
@@ -782,6 +970,7 @@ class AppHandler(BaseHTTPRequestHandler):
                 "url": url,
                 "title": title,
                 "query": query,
+                "format": used,
                 "found": len(matches) > 0,
                 "matches": matches
             })
@@ -804,25 +993,81 @@ class AppHandler(BaseHTTPRequestHandler):
             tab_index = _payload_tab_index(payload)
             with _DRIVER_LOCK:
                 _resolve_tab(driver, tab_index)
-                result = driver.execute_script(code)
+                result, logs = _run_js_capture(driver, code)
                 title = driver.title
                 url = driver.current_url
-            if result is None:
-                result_str = "(undefined)"
-            elif isinstance(result, str):
-                result_str = result
-            elif isinstance(result, bool):
-                result_str = str(result)
+            result_str = _serialize_js_result(result)
+            log_lines = [str(line) for line in logs if str(line).strip()]
+            if log_lines:
+                log_text = "\n".join(log_lines)[:8000]
+                full = (
+                    f"JS result from {title} ({url}):\n{result_str[:8000]}\n\n"
+                    f"console output:\n{log_text}"
+                )
             else:
-                result_str = json.dumps(result, indent=2)
+                full = f"JS result from {title} ({url}):\n{result_str[:8000]}"
             self.send_json({
-                "result": f"JS result from {title}:\n{result_str[:8000]}",
+                "result": full,
                 "url": url,
                 "title": title,
-                "js_result": result_str[:8000]
+                "js_result": result_str[:8000],
+                "logs": "\n".join(log_lines)[:8000]
             })
         except Exception as error:
             logger.exception("run_js error")
+            self.send_json({"error": str(error)}, 500)
+
+    def handle_close_tab(self):
+        """Close a browser tab by index (never the SC.AI interface tab)."""
+        driver = _DRIVER
+        if driver is None:
+            self.send_json({"error": "Browser not ready"}, 503)
+            return
+        try:
+            payload = json.loads(self.read_body() or b"{}")
+            tab_index = _payload_tab_index(payload)
+            with _DRIVER_LOCK:
+                handles = driver.window_handles
+                if not handles:
+                    self.send_json({"error": "No tabs are open"}, 400)
+                    return
+                if not (0 <= tab_index < len(handles)):
+                    self.send_json({
+                        "error": f"Invalid tab_index {tab_index}. Only {len(handles)} tab(s) are open (0-based)."
+                    }, 400)
+                    return
+                handle = handles[tab_index]
+                try:
+                    driver.switch_to.window(handle)
+                    title = driver.title
+                    url = driver.current_url
+                except Exception:
+                    title, url = "(unavailable)", ""
+                # Closing the tab that is actually hosting SC.AI would silently
+                # kill the app, so disallow it.
+                scai_url = f"http://127.0.0.1:{self.server.server_address[1]}/"
+                if isinstance(url, str) and url.split("?", 1)[0].rstrip("/") == scai_url.rstrip("/"):
+                    self.send_json({
+                        "error": "Cannot close the SC.AI interface tab. Choose another tab_index."
+                    }, 400)
+                    return
+                driver.close()
+                time.sleep(0.3)
+                remaining = driver.window_handles
+                if remaining:
+                    target = _active_tab_handle(driver) or remaining[0]
+                    try:
+                        driver.switch_to.window(target)
+                    except Exception:
+                        pass
+            self.send_json({
+                "success": True,
+                "result": f"Closed tab #{tab_index} ({title}). {len(remaining)} tab(s) still open." if remaining else "Closed the only browser tab.",
+                "closed": title,
+                "remaining": len(remaining)
+            })
+        except Exception as error:
+            logger.exception("close_tab error")
             self.send_json({"error": str(error)}, 500)
 
     def handle_click_element(self):
@@ -842,6 +1087,7 @@ class AppHandler(BaseHTTPRequestHandler):
             with _DRIVER_LOCK:
                 _resolve_tab(driver, tab_index)
                 element = _find_element(driver, selector, index)
+                _flash_element(driver, element)
                 try:
                     element.click()
                 except Exception:
@@ -884,6 +1130,7 @@ class AppHandler(BaseHTTPRequestHandler):
                         element.clear()
                     except Exception:
                         pass
+                _flash_element(driver, element)
                 element.send_keys(text)
                 title = driver.title
                 url = driver.current_url
