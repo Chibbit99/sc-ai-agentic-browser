@@ -731,8 +731,7 @@
                     '<div class="tool-call-detail-section"><div class="tool-call-detail-label">Result</div><div class="tool-call-detail-content' + (success ? '' : ' tool-call-error-text') + '">' + escapeHtml(resultText.substring(0, 3000)) + '</div></div>' +
                 '</div>';
 
-            container.appendChild(el);
-            container.scrollTop = container.scrollHeight;
+            insertAboveTyping(el);
         }
 
         function addReasoning() {
@@ -760,17 +759,21 @@
             if (el) el.remove();
         }
 
-        // Execute a tool call via the local runtime API
-        function withTabIndex(params) {
-            const result = Object.assign({}, params || {});
-            if (!Number.isInteger(result.tab_index) || result.tab_index < 0) {
-                const active = currentTabs.find(function (tab) { return tab.active; });
-                result.tab_index = active ? active.index : 0;
+        // Insert a message/element above the typing indicator so a single
+        // THINKING spinner stays pinned at the bottom during a tool chain.
+        function insertAboveTyping(el) {
+            const container = document.getElementById('chatMessages');
+            const typing = document.getElementById('typingIndicator');
+            if (typing) {
+                container.insertBefore(el, typing);
+            } else {
+                container.appendChild(el);
             }
-            return result;
+            container.scrollTop = container.scrollHeight;
         }
 
-        async        function withTabIndex(params) {
+        // Fill in a missing tab_index using the currently active tab.
+        function withTabIndex(params) {
             const result = Object.assign({}, params || {});
             if (!Number.isInteger(result.tab_index) || result.tab_index < 0) {
                 const active = currentTabs.find(function (tab) { return tab.active; });
@@ -1068,8 +1071,9 @@
                 }
                 currentMessages.push(...messages.slice(-40));
 
-                // Show thinking for the next round
-                if (activeToolCount < MAX_TOOL_CALLS) showTyping('THINKING');
+                // No THINKING re-show between tool rounds: the single spinner
+                // from the initial request stays pinned until the final text
+                // streams, keeping the tool-chain view clean.
             }
 
             removeTyping();

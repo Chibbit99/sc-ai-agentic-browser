@@ -367,6 +367,19 @@ def _active_tab_handle(driver):
     return fallback
 
 
+def _payload_tab_index(payload):
+    """Coerce a payload tab_index field to an int, defaulting to -1.
+
+    The model may pass 1, "1" or 1.0; 1.0 would otherwise fail Python's
+    isinstance(int) check in _resolve_tab and silently target the wrong tab.
+    """
+    try:
+        value = payload.get("tab_index", -1)
+        return int(value)
+    except (TypeError, ValueError):
+        return -1
+
+
 def _resolve_tab(driver, tab_index):
     """Switch the driver to the requested tab index, or the user's active tab."""
     handles = driver.window_handles
@@ -623,7 +636,7 @@ class AppHandler(BaseHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.read_body() or b"{}")
-            tab_index = payload.get("tab_index", -1)
+            tab_index = _payload_tab_index(payload)
             with _DRIVER_LOCK:
                 handle = _resolve_tab(driver, tab_index)
                 if handle is None:
@@ -696,8 +709,9 @@ class AppHandler(BaseHTTPRequestHandler):
         try:
             payload = json.loads(self.read_body() or b"{}")
             fmt = payload.get("format", "text")
+            tab_index = _payload_tab_index(payload)
             with _DRIVER_LOCK:
-                _resolve_tab(driver, payload.get("tab_index", -1))
+                _resolve_tab(driver, tab_index)
                 if fmt == "html":
                     content = _clean_html(driver.page_source)
                 else:
@@ -734,8 +748,9 @@ class AppHandler(BaseHTTPRequestHandler):
             if not query:
                 self.send_json({"error": "query is required"}, 400)
                 return
+            tab_index = _payload_tab_index(payload)
             with _DRIVER_LOCK:
-                _resolve_tab(driver, payload.get("tab_index", -1))
+                _resolve_tab(driver, tab_index)
                 text = driver.execute_script("return document.body.innerText;") or ""
                 if not text.strip():
                     time.sleep(1.0)
@@ -786,8 +801,9 @@ class AppHandler(BaseHTTPRequestHandler):
             if not code:
                 self.send_json({"error": "code is required"}, 400)
                 return
+            tab_index = _payload_tab_index(payload)
             with _DRIVER_LOCK:
-                _resolve_tab(driver, payload.get("tab_index", -1))
+                _resolve_tab(driver, tab_index)
                 result = driver.execute_script(code)
                 title = driver.title
                 url = driver.current_url
@@ -822,8 +838,9 @@ class AppHandler(BaseHTTPRequestHandler):
             if not selector:
                 self.send_json({"error": "selector is required"}, 400)
                 return
+            tab_index = _payload_tab_index(payload)
             with _DRIVER_LOCK:
-                _resolve_tab(driver, payload.get("tab_index", -1))
+                _resolve_tab(driver, tab_index)
                 element = _find_element(driver, selector, index)
                 try:
                     element.click()
@@ -858,8 +875,9 @@ class AppHandler(BaseHTTPRequestHandler):
                 return
             if not isinstance(text, str):
                 text = str(text)
+            tab_index = _payload_tab_index(payload)
             with _DRIVER_LOCK:
-                _resolve_tab(driver, payload.get("tab_index", -1))
+                _resolve_tab(driver, tab_index)
                 element = _find_element(driver, selector, index)
                 if clear:
                     try:
